@@ -1,0 +1,22 @@
+{
+  "name": "极简记账",
+  "short_name": "记账",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#ffffff",
+  "background_color": "#f0f2f8",
+  "icons": [
+    {
+      "src": "/wallet-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/wallet.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

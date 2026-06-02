@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>本月支出</title>
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/wallet-512.png" />
+    <link rel="apple-touch-icon" href="/wallet-512.png" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="bg-background text-slate-900" style="min-height:100vh;min-height:100dvh">
+
+    <!-- 启动渐变 + 玻璃层 + CSS 钱包/金币动画 -->
+    <div id="splash-screen" role="presentation" aria-hidden="true">
+      <div class="splash-screen__veil" aria-hidden="true"></div>
+      <div class="splash-screen__art">
+        <div class="splash-wallet" aria-hidden="true">
+          <span class="splash-wallet__fold"></span>
+          <span class="splash-wallet__slot"></span>
+        </div>
+        <div class="splash-coin" aria-hidden="true"><span class="splash-coin__inner"></span></div>
+      </div>
+    </div>
+
+    <!-- ── 家庭登录遮罩 ───────────────────────────────────────── -->
+    <div id="loginOverlay" class="fixed inset-0 z-[100] flex items-center justify-center"
+         style="background:rgba(15,18,28,0.45);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)">
+      <div class="login-card w-full max-w-sm mx-4 sm:max-w-md sm:mx-0">
+
+        <div class="mb-7 flex flex-col items-center gap-3">
+          <div class="flex h-16 w-16 items-center justify-center rounded-[22px] shadow-lg"
+               style="background:linear-gradient(145deg,#1a6fff,#0051d4);box-shadow:0 8px 24px rgba(0,82,255,0.35)">
+            <svg class="h-8 w-8 text-white" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M3.75 6.75a3 3 0 0 0-3 3v6.75a3 3 0 0 0 3 3h16.5a3 3 0 0 0 3-3V9.75a3 3 0 0 0-3-3H3.75Zm16.5 2.25a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.742h-1.5a.75.75 0 0 1-.75-.742V9.75a.75.75 0 0 1 .75-.75h1.5ZM6 12.75a3 3 0 1 1 6 0 3 3 0 0 1-6 0Z"/>
+            </svg>
+          </div>
+          <div class="text-center">
+            <h2 class="text-xl font-semibold tracking-tight" style="color:#f1f5f9">开启家庭共享账本</h2>
+            <p class="mt-1.5 text-[13px] leading-relaxed" style="color:rgba(241,245,249,0.52)">
+              选择或创建家庭，与家人共同记录每一笔花费
+            </p>
+          </div>
+        </div>
+
+        <form id="loginForm" class="space-y-4">
+
+          <div class="login-field-block">
+            <div class="flex items-center justify-between">
+              <label class="login-label">家庭名称</label>
+              <span id="loginSyncStatus" class="login-sync-status hidden"></span>
+            </div>
+            <div class="custom-select-wrap" id="familySelectWrap">
+              <button type="button" id="familySelectBtn" class="custom-select-btn">
+                <span id="familySelectText" class="custom-select-placeholder">请选择或创建家庭名称</span>
+                <svg id="familyChevron" class="custom-select-chevron h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+                </svg>
+              </button>
+              <input type="text" id="familyNewInput" class="custom-new-input hidden"
+                placeholder="输入新的家庭名称" maxlength="20" autocomplete="off" />
+              <div id="familyDropdown" class="custom-dropdown hidden"></div>
+            </div>
+          </div>
+
+          <div class="login-field-block" id="memberBlock">
+            <div class="flex items-center justify-between">
+              <label class="login-label">我的昵称</label>
+              <span id="memberHint" class="member-hint hidden"></span>
+            </div>
+            <div class="custom-select-wrap" id="memberSelectWrap">
+              <button type="button" id="memberSelectBtn" class="custom-select-btn">
+                <span id="memberSelectText" class="custom-select-placeholder">请选择或创建昵称</span>
+                <svg id="memberChevron" class="custom-select-chevron h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+                </svg>
+              </button>
+              <input type="text" id="memberNewInput" class="custom-new-input hidden"
+                placeholder="输入新的昵称（如：爸爸）" maxlength="12" autocomplete="off" />
+              <div id="memberDropdown" class="custom-dropdown hidden"></div>
+            </div>
+          </div>
+
+          <p id="loginError" class="hidden pt-0.5 text-center text-xs" style="color:#ff6b6b">请填写家庭名称和昵称</p>
+
+          <button type="submit" class="login-btn mt-1">
+            <span>进入家庭账本</span>
+            <svg class="h-4 w-4 opacity-70" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/>
+            </svg>
+          </button>
+        </form>
+
+        <p class="mt-5 text-center text-[11px]" style="color:rgba(241,245,249,0.32)">
+          同一家庭名称下的所有人共享一个账本
+        </p>
+      </div>
+    </div>
+    <!-- ─────────────────────────────────────────────────────────── -->
+
+    <div class="page-wrapper mx-auto flex min-h-screen w-full max-w-xl flex-col px-4 sm:px-6">
+      <header class="mb-6 flex items-center justify-between gap-2 overflow-hidden">
+        <div id="memberBadge" class="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-slate-500">
+          <span id="memberLabel" class="inline-block max-w-[10rem] truncate rounded-full bg-white/65 px-2.5 py-1 font-medium leading-5 backdrop-blur-[8px] border border-white/50 text-slate-600 sm:max-w-none"></span>
+          <span id="syncDot" class="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" title="实时同步中"></span>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button id="budgetDisplay"
+            class="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-white/65 px-2.5 py-1 text-xs text-slate-600 backdrop-blur-[8px] border border-white/50 transition hover:bg-white/80 active:scale-95"
+            title="点击设置预算">
+            <svg class="h-3 w-3 shrink-0 opacity-60" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487a2.032 2.032 0 1 1 2.872 2.872L7.5 19.5l-4 1 1-4 12.362-12.013Z"/>
+            </svg>
+            预算 · ¥ <span id="budgetValue">8,000</span>
+          </button>
+          <button id="logoutBtn" class="logout-icon-btn shrink-0" title="退出登录 / 切换身份">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="installPrompt"
+        class="mb-4 hidden items-center justify-between gap-3 overflow-hidden rounded-2xl bg-white/70 px-4 py-3 text-sm text-slate-700 backdrop-blur-[12px] border border-white/60 shadow-glass">
+        <p id="installHintText" class="min-w-0 truncate text-xs">可安装到桌面，获得更沉浸体验。</p>
+        <button id="installAppBtn" type="button"
+          class="shrink-0 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+          安装到桌面
+        </button>
+      </div>
+
+      <!-- ── Tab 导航 ───────────────────────────────────────── -->
+      <div class="tab-bar mb-5">
+        <button id="tabCurrentBtn" class="tab-btn active">本月</button>
+        <button id="tabHistoryBtn" class="tab-btn">历史账单</button>
+      </div>
+
+      <main id="currentView" class="flex flex-1 flex-col gap-6">
+
+        <!-- 1. 本月已支出 -->
+        <section>
+          <div class="flex items-center gap-2">
+            <span class="wallet-logo h-8 w-8 text-slate-900" aria-hidden="true"></span>
+            <h1 class="text-3xl font-semibold tracking-tight text-slate-900 sm:text-4xl">本月支出</h1>
+          </div>
+          <p class="mt-2 text-sm text-slate-500">清晰地看到你的每一笔花费。</p>
+
+          <div id="budgetCard" class="mt-6 rounded-2xl bg-white/72 p-5 backdrop-blur-[12px] border border-white/60 shadow-glass">
+            <div>
+              <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">本月已支出</p>
+              <p id="monthlyTotal" class="mt-2 text-3xl font-semibold tracking-tight text-slate-900 tabular-nums">¥ 0</p>
+              <p id="momInline" class="hidden mt-1.5 text-xs font-medium tracking-wide"></p>
+            </div>
+            <div class="mt-4 h-px w-full bg-gradient-to-r from-transparent via-slate-200 to-transparent"></div>
+            <div class="mt-4">
+              <div class="mb-2 flex items-center justify-between text-xs text-slate-500">
+                <span>剩余额度</span>
+                <div class="flex items-center gap-1.5">
+                  <span id="budgetOverrunTag" class="hidden rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-500">预算超支</span>
+                  <span id="remainingBudget" class="font-medium text-slate-700">¥ 0</span>
+                </div>
+              </div>
+              <div class="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                <div id="budgetProgressBar" class="budget-bar h-full rounded-full transition-all duration-500" style="width:0%"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 最近消费清单 -->
+        <section aria-label="最近消费">
+          <div class="rounded-2xl border border-white/55 bg-white/40 p-4 shadow-soft backdrop-blur-[14px] sm:p-5">
+            <div class="mb-3 flex flex-col gap-0.5">
+              <p id="recentConsumeHeading" class="text-base font-semibold tracking-tight text-slate-900 sm:text-[1.12rem]">全部消费</p>
+              <p class="text-xs text-slate-500">以下为列表筛选结果，可与上方「本月已支出」（全家总计）对照查看</p>
+            </div>
+            <div class="mb-3 flex flex-col gap-3 border-t border-white/60 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 flex-row flex-nowrap items-center gap-2 sm:gap-3">
+                <h2 class="shrink-0 text-sm font-semibold tracking-tight text-slate-900">最近消费</h2>
+                <div class="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-initial sm:max-w-none">
+                  <label for="recentMemberFilter" class="shrink-0 text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">账户</label>
+                  <select id="recentMemberFilter" class="recent-member-filter-select min-w-0 flex-1 sm:flex-initial" autocomplete="off" aria-describedby="recentConsumeHeading"></select>
+                </div>
+              </div>
+              <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <button id="clearTodayBtn"
+                  class="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                  type="button">清空今日数据</button>
+                <button id="viewAllBtn"
+                  class="text-xs font-medium text-accent hover:text-accent/80 focus:outline-none focus-visible:rounded-full focus-visible:ring-2 focus-visible:ring-accent/40"
+                  type="button">查看全部</button>
+              </div>
+            </div>
+            <div id="recentFilteredTotalStrip"
+              class="mb-2 flex flex-col gap-1 rounded-xl border border-white/70 bg-white/60 px-3.5 py-2.5 shadow-sm backdrop-blur-[10px] sm:flex-row sm:items-baseline sm:justify-between sm:gap-3"
+              role="status" aria-live="polite">
+              <span id="recentFilteredTotalCaption" class="text-xs font-medium leading-snug text-slate-600">列表内本月合计 · 全部成员</span>
+              <span id="recentFilteredTotalAmount" class="text-lg font-semibold tabular-nums tracking-tight text-slate-900">¥ 0.00</span>
+            </div>
+            <div id="expenseList" class="divide-y divide-white/80 overflow-hidden rounded-2xl bg-white/70 backdrop-blur-[12px] border border-white/60 shadow-glass"></div>
+
+            <div id="expenseEmptyState" class="mt-3 hidden flex-col items-center justify-center rounded-2xl bg-white/70 backdrop-blur-[12px] border border-white/60 shadow-glass py-12 px-6 text-center">
+              <div class="empty-state-icon">
+                <svg class="h-7 w-7 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M16 12a2 2 0 0 1 2-2h3v4h-3a2 2 0 0 1-2-2Z"/>
+                </svg>
+              </div>
+              <p class="text-sm font-semibold text-slate-700">这个月还没有记录</p>
+              <p class="mt-1.5 text-xs leading-relaxed text-slate-400">
+                点击右下角&nbsp;<span class="inline-block rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-500">＋</span>&nbsp;开始记录<br>第一笔账单吧 ✦
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. 本周支出趋势折线图 -->
+        <section aria-label="本周支出趋势">
+          <h2 class="mb-3 text-sm font-semibold tracking-tight text-slate-900">本周支出趋势</h2>
+          <div class="rounded-2xl bg-white/70 p-5 backdrop-blur-[12px] border border-white/60 shadow-glass">
+            <div class="weekly-chart-wrap">
+              <canvas id="weeklyChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. 本月消费排行榜 -->
+        <section aria-label="本月消费排行榜">
+          <h2 class="mb-3 text-sm font-semibold tracking-tight text-slate-900">本月消费排行榜（Top 5）</h2>
+          <div class="rounded-2xl bg-white/70 p-5 backdrop-blur-[12px] border border-white/60 shadow-glass">
+            <div id="monthlyRankingEmpty" class="hidden py-5 text-center text-sm text-slate-400">本月暂无可排行消费</div>
+            <ul id="monthlyRankingList" class="space-y-3"></ul>
+          </div>
+        </section>
+
+        <!-- 5. 本月支出分布饼图 -->
+        <section aria-label="本月支出分布">
+          <h2 class="mb-3 text-sm font-semibold tracking-tight text-slate-900">本月支出分布</h2>
+          <div class="rounded-2xl bg-white/70 p-5 backdrop-blur-[12px] border border-white/60 shadow-glass">
+            <div id="chartEmpty" class="hidden flex-col items-center justify-center py-6 text-center text-sm text-slate-400">
+              <svg class="mb-2 h-8 w-8 text-slate-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.4">
+                <circle cx="12" cy="12" r="9"/><path stroke-linecap="round" d="M12 3v9l5 3"/>
+              </svg>
+              暂无消费记录
+            </div>
+            <div id="chartWrap" class="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
+              <div class="relative w-40 shrink-0 sm:w-48">
+                <canvas id="spendingChart"></canvas>
+                <div id="chartCenter" class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p id="chartCenterAmount" class="text-lg font-semibold text-slate-900"></p>
+                  <p class="text-[10px] text-slate-400">总支出</p>
+                </div>
+              </div>
+              <ul id="chartLegend" class="flex w-full flex-col gap-2 sm:flex-1"></ul>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. 支出洞察：同环比对比组件 -->
+        <section id="insightSection" class="hidden fade-in-up" aria-label="支出洞察">
+          <div class="insight-glass rounded-3xl p-5">
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-semibold tracking-tight text-slate-900">支出洞察</h2>
+              <span id="insightBadge" class="insight-badge">首月记录</span>
+            </div>
+            <div class="mt-4 flex items-center gap-2">
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] text-slate-400">本月</p>
+                <p id="insightCurrent" class="mt-0.5 text-base font-semibold text-slate-900 tabular-nums truncate">¥ 0</p>
+              </div>
+              <div class="flex flex-col items-center gap-0.5 shrink-0 px-2">
+                <p id="insightDelta" class="text-2xl font-bold tracking-tight text-slate-400 tabular-nums">-</p>
+                <p id="insightDeltaLabel" class="text-[10px] font-medium text-slate-400">暂无数据</p>
+              </div>
+              <div class="flex-1 min-w-0 text-right">
+                <p class="text-[11px] text-slate-400">上月</p>
+                <p id="insightLast" class="mt-0.5 text-base font-semibold text-slate-400 tabular-nums truncate">¥ 0</p>
+              </div>
+            </div>
+            <div class="mt-4 space-y-2">
+              <div class="flex items-center gap-2">
+                <span class="w-7 shrink-0 text-[10px] text-slate-400">本月</span>
+                <div class="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                  <div id="insightBarCurrent" class="h-full rounded-full bg-accent transition-all duration-700 ease-out" style="width:0%"></div>
+                </div>
+                <span id="insightCurrentPct" class="w-7 shrink-0 text-right text-[10px] text-slate-400"></span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="w-7 shrink-0 text-[10px] text-slate-400">上月</span>
+                <div class="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                  <div id="insightBarLast" class="h-full rounded-full bg-slate-300 transition-all duration-700 ease-out" style="width:0%"></div>
+                </div>
+                <span id="insightLastPct" class="w-7 shrink-0 text-right text-[10px] text-slate-400"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- ── 历史账单视图 ──────────────────────────────────── -->
+      <section id="historyView" class="hidden flex-col gap-5 flex-1">
+
+        <div>
+          <h2 class="mb-3 text-sm font-semibold tracking-tight text-slate-900">本周趋势</h2>
+          <div class="rounded-2xl bg-white/70 p-4 backdrop-blur-[12px] border border-white/60 shadow-glass">
+            <div class="weekly-chart-wrap">
+              <canvas id="weeklyChartHistory"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3.5 backdrop-blur-[12px] border border-white/60 shadow-glass">
+          <button id="prevMonthBtn" class="month-nav-btn" title="上一个月">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5"/>
+            </svg>
+          </button>
+          <div class="text-center">
+            <p id="historyMonthTitle" class="text-[17px] font-semibold tracking-tight text-slate-900">加载中…</p>
+            <button id="jumpToCurrentBtn" class="mt-0.5 text-[11px] font-medium text-accent hover:opacity-70 transition">↩ 回到本月</button>
+          </div>
+          <button id="nextMonthBtn" class="month-nav-btn" title="下一个月">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5"/>
+            </svg>
+          </button>
+        </div>
+
+        <button id="exportCsvBtn" type="button"
+          class="flex w-full items-center justify-center gap-2 rounded-2xl bg-white/70 px-4 py-3 text-sm font-semibold text-indigo-600 backdrop-blur-[12px] border border-white/60 shadow-glass transition hover:bg-white/85 active:scale-[0.97]">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v13M7 11l5 5 5-5"/><path d="M5 21h14"/>
+          </svg>
+          导出全部账单为 CSV
+        </button>
+
+        <div id="historyLoading" class="hidden items-center justify-center gap-3 py-10 text-sm text-slate-400">
+          <div class="loading-spinner"></div>
+          <span>加载月度账单…</span>
+        </div>
+
+        <div id="historySummaryCard" class="rounded-2xl bg-white/70 p-5 backdrop-blur-[12px] border border-white/60 shadow-glass transition-opacity">
+          <div class="flex items-start justify-between">
+            <div>
+              <p class="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">当月总支出</p>
+              <p id="historyTotalAmount" class="mt-2 text-3xl font-semibold tracking-tight text-slate-900">¥ 0</p>
+              <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                <span id="historyCountEl">共 0 笔</span>
+                <span id="historyMembersEl"></span>
+              </div>
+            </div>
+            <div class="rounded-2xl bg-accentSoft px-3 py-2 text-right">
+              <p class="text-[11px] text-slate-500">本家庭</p>
+              <p id="historyFamilyTag" class="mt-0.5 text-xs font-semibold text-accent">共享账本</p>
+            </div>
+          </div>
+          <div id="historyCategoryBars" class="mt-5 space-y-3.5"></div>
+        </div>
+
+        <section>
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-semibold tracking-tight text-slate-900">账单明细</h2>
+            <span id="historyFilterCount" class="hidden text-xs text-slate-400"></span>
+          </div>
+
+          <div class="mb-3 flex flex-col gap-2">
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                   xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="m21 21-4.35-4.35"/>
+              </svg>
+              <input id="historySearchInput" type="search" class="history-search-input"
+                     placeholder="搜索名称或备注…" autocomplete="off" spellcheck="false">
+            </div>
+            <div id="historyCatChips" class="cat-chips-row"></div>
+          </div>
+
+          <div id="historyEmpty" class="hidden flex-col items-center justify-center rounded-3xl bg-white/75 py-16 text-center shadow-soft ring-1 ring-black/5">
+            <svg class="mb-3 h-10 w-10 text-slate-200" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+              <circle cx="12" cy="12" r="9"/>
+            </svg>
+            <p class="text-sm text-slate-400">本月暂无账单记录</p>
+            <p class="mt-1 text-xs text-slate-300">家庭成员记账后将在此显示</p>
+          </div>
+
+          <div id="historyExpenseList" class="divide-y divide-white/80 overflow-hidden rounded-2xl bg-white/70 backdrop-blur-[12px] border border-white/60 shadow-glass"></div>
+
+          <div id="historySearchEmpty" class="hidden flex-col items-center justify-center rounded-2xl bg-white/70 backdrop-blur-[12px] border border-white/60 shadow-glass py-12 px-6 text-center">
+            <div class="empty-state-icon">
+              <svg class="h-7 w-7 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6">
+                <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" d="m21 21-4.35-4.35"/>
+              </svg>
+            </div>
+            <p class="text-sm font-semibold text-slate-600">没有找到匹配的账单</p>
+            <p class="mt-1.5 text-xs leading-relaxed text-slate-400">试试换个关键词，<br>或点击「全部」清除分类筛选。</p>
+          </div>
+        </section>
+      </section>
+      <!-- ─────────────────────────────────────────────────────────── -->
+
+      <button id="fabButton" type="button" aria-label="新增一笔支出"
+        class="fab-safe fixed flex h-14 w-14 items-center justify-center rounded-full text-white transition active:scale-95"
+        style="background:linear-gradient(135deg,#6366f1 0%,#3b82f6 100%);box-shadow:0 8px 24px rgba(99,102,241,0.38),0 2px 8px rgba(0,0,0,0.12),inset 0 1px 0 rgba(255,255,255,0.20)">
+        <span class="sr-only">新增一笔支出</span>
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 5v14"/><path d="M5 12h14"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="modalOverlay" class="fixed inset-0 z-40 hidden bg-black/30 backdrop-blur-sm"></div>
+    <section id="addExpenseModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"
+      class="add-expense-modal-sheet fixed bottom-0 z-50 hidden rounded-t-2xl bg-white/85 pt-5 backdrop-blur-[16px] border border-white/70 shadow-glass sm:inset-x-0 sm:mx-auto sm:bottom-8 sm:max-w-md sm:rounded-2xl sm:w-full">
+      <div class="mb-4 flex shrink-0 min-w-0 items-center justify-between gap-3">
+        <h3 id="modalTitle" class="text-base font-semibold tracking-tight text-slate-900">新增消费</h3>
+        <button id="closeModal" type="button" class="shrink-0 rounded-full px-2 py-1 text-sm text-slate-500 hover:bg-slate-100">关闭</button>
+      </div>
+      <form id="expenseForm" class="expense-modal-form space-y-4">
+        <div class="min-w-0">
+          <div class="mb-2 flex items-center justify-between">
+            <label class="text-xs font-medium text-slate-500">分类</label>
+          </div>
+          <div class="expense-modal-cat-grid grid min-w-0 w-full grid-cols-4 gap-1.5 sm:gap-2">
+
+            <label class="cat-label min-w-0 cursor-pointer">
+              <input type="radio" name="category" value="餐饮" class="peer sr-only" checked>
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">🍔</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">餐饮</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="交通" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">🚗</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">交通</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="购物" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">🛍️</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">购物</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="娱乐" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">🎮</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">娱乐</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="医疗" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">💊</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">医疗</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="居家" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">🏠</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">居家</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="其他" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">📦</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">其他</span>
+              </div>
+            </label>
+
+            <label class="cat-label cursor-pointer">
+              <input type="radio" name="category" value="通讯" class="peer sr-only">
+              <div class="cat-option cat-expense peer-checked:cat-checked flex min-w-0 w-full flex-col items-center gap-0.5 rounded-xl p-1.5 sm:gap-1 sm:rounded-2xl sm:p-2.5">
+                <span class="text-xl leading-none">📱</span>
+                <span class="cat-text text-[11px] font-medium text-slate-500">通讯</span>
+              </div>
+            </label>
+
+          </div>
+        </div>
+        <div class="min-w-0">
+          <label for="expenseName" class="mb-1 block text-xs font-medium text-slate-500">消费名称 (必填)</label>
+          <input id="expenseName" name="expenseName" type="text" required
+            placeholder="例如：电影票"
+            class="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/35" />
+        </div>
+        <div class="min-w-0">
+          <label for="expenseAmount" class="mb-1 block text-xs font-medium text-slate-500">金额 (必填)</label>
+          <input id="expenseAmount" name="expenseAmount" type="number" min="0.01" step="0.01" required
+            placeholder="例如：58"
+            class="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/35" />
+        </div>
+        <div class="min-w-0">
+          <label for="expenseNote" class="mb-1 block text-xs font-medium text-slate-500">备注 (选填)</label>
+          <input id="expenseNote" name="expenseNote" type="text"
+            placeholder="添加详细说明..."
+            class="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/35" />
+        </div>
+        <div class="min-w-0">
+          <label for="expenseDate" class="mb-1 block text-xs font-medium text-slate-500">日期 (默认今天，可补账)</label>
+          <input id="expenseDate" name="expenseDate" type="date"
+            class="w-full min-w-0 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition focus:border-accent focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/35" />
+        </div>
+        <button id="saveExpenseBtn" type="submit"
+          class="mt-2 inline-flex w-full items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800">
+          确定添加
+        </button>
+      </form>
+    </section>
+
+    <!-- ── 预算设置弹窗 ───────────────────────────────────────── -->
+    <div id="budgetOverlay" class="fixed inset-0 z-50 hidden flex items-end justify-center sm:items-center"
+         style="background:rgba(15,18,28,0.30);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)">
+      <div class="budget-sheet w-full max-w-sm overflow-hidden">
+        <div class="flex justify-center pb-1 pt-3 sm:hidden">
+          <div class="h-1 w-10 rounded-full bg-slate-300/60"></div>
+        </div>
+        <div class="px-6 pb-8 pt-5">
+          <div class="mb-7 flex items-start justify-between">
+            <div>
+              <h3 class="text-[18px] font-semibold tracking-tight text-slate-900">设置本月预算</h3>
+              <p class="mt-1 text-[13px] leading-relaxed text-slate-400">修改后剩余额度实时刷新</p>
+            </div>
+            <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-accentSoft">
+              <svg class="h-5 w-5 text-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+              </svg>
+            </div>
+          </div>
+          <div class="relative mb-6">
+            <span class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-lg font-semibold text-slate-400">¥</span>
+            <input id="budgetInput" class="budget-input" type="number" min="1" step="1"
+              inputmode="numeric" placeholder="输入预算金额" />
+          </div>
+          <div class="mb-6 flex gap-2">
+            <button class="budget-preset flex-1 rounded-xl bg-slate-100 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-200 active:scale-95" data-val="3000">¥ 3,000</button>
+            <button class="budget-preset flex-1 rounded-xl bg-slate-100 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-200 active:scale-95" data-val="5000">¥ 5,000</button>
+            <button class="budget-preset flex-1 rounded-xl bg-slate-100 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-200 active:scale-95" data-val="8000">¥ 8,000</button>
+            <button class="budget-preset flex-1 rounded-xl bg-slate-100 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-200 active:scale-95" data-val="12000">¥ 1.2W</button>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <button id="cancelBudgetBtn"
+              class="rounded-2xl bg-slate-100 py-3.5 text-[15px] font-medium text-slate-600 transition hover:bg-slate-200 active:scale-[0.97]">取消</button>
+            <button id="saveBudgetBtn"
+              class="rounded-2xl py-3.5 text-[15px] font-semibold text-white transition active:scale-[0.97]"
+              style="background:linear-gradient(160deg,#2979ff 0%,#0051d4 100%);box-shadow:0 4px 16px rgba(0,82,255,0.38),inset 0 1px 0 rgba(255,255,255,0.18)">确定</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ─────────────────────────────────────────────────────────── -->
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
