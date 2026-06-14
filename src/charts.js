@@ -1,18 +1,27 @@
 import { Chart, registerables } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { categoryConfig, formatMoney, getDateKey } from './utils.js';
-import { S } from './state.js';
 
 Chart.register(...registerables, ChartDataLabels);
 
-// 私有图表实例（统一存入对象，消除 3 个 export let）
+export const categoryConfig = {
+  餐饮: { emoji: "🍜", chartColor: "#f97316" },
+  交通: { emoji: "🚗", chartColor: "#3b82f6" },
+  购物: { emoji: "🛍️", chartColor: "#ec4899" },
+  娱乐: { emoji: "🎮", chartColor: "#8b5cf6" },
+  医疗: { emoji: "💊", chartColor: "#10b981" },
+  居家: { emoji: "🏠", chartColor: "#f59e0b" },
+  通讯: { emoji: "📱", chartColor: "#06b6d4" },
+  其他: { emoji: "📦", chartColor: "#94a3b8" },
+};
+export const formatMoney = v => "¥ " + Number(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const getDateKey  = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
 const C = { spending: null, weekly: null, weeklyHist: null };
 
-// ── 饼图：本月支出分布 ────────────────────────────────
 export function updateChart() {
   const now = new Date(), y = now.getFullYear(), m = now.getMonth();
   const totals = {};
-  S.expenses
+  window.AppStore.expenses
     .filter(e => { const d = new Date(e.timestamp); return d.getFullYear() === y && d.getMonth() === m; })
     .forEach(e => { const c = e.category || "其他"; totals[c] = (totals[c] || 0) + Number(e.amount); });
 
@@ -20,11 +29,8 @@ export function updateChart() {
   const values     = cats.map(k => totals[k]);
   const colors     = cats.map(k => (categoryConfig[k] || categoryConfig["其他"]).chartColor);
   const grandTotal = values.reduce((a, b) => a + b, 0);
-
   const chartWrap  = document.getElementById("chartWrap");
   const chartEmpty = document.getElementById("chartEmpty");
-  const legend     = document.getElementById("chartLegend");
-  const centerAmt  = document.getElementById("chartCenterAmount");
   const canvas     = document.getElementById("spendingChart");
 
   if (!cats.length) {
@@ -36,9 +42,8 @@ export function updateChart() {
 
   chartEmpty.classList.add("hidden"); chartEmpty.classList.remove("flex");
   chartWrap.classList.remove("hidden");
-  centerAmt.textContent = "¥ " + grandTotal.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
-
-  legend.innerHTML = cats.map((cat, i) => {
+  document.getElementById("chartCenterAmount").textContent = "¥ " + grandTotal.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+  document.getElementById("chartLegend").innerHTML = cats.map((cat, i) => {
     const pct = ((values[i] / grandTotal) * 100).toFixed(1);
     return `<li class="flex items-center justify-between gap-2">
       <span class="flex items-center gap-2 text-sm text-slate-700">
@@ -66,9 +71,7 @@ export function updateChart() {
           tooltip: {
             backgroundColor: "rgba(255,255,255,0.92)", titleColor: "#0f172a", bodyColor: "#475569",
             borderColor: "rgba(0,0,0,0.06)", borderWidth: 1, padding: 10, cornerRadius: 12,
-            callbacks: {
-              label: ctx => ` ¥ ${ctx.parsed.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}  (${((ctx.parsed / grandTotal) * 100).toFixed(1)}%)`,
-            },
+            callbacks: { label: ctx => ` ¥ ${ctx.parsed.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}  (${((ctx.parsed / grandTotal) * 100).toFixed(1)}%)` },
           },
         },
       },
@@ -76,7 +79,6 @@ export function updateChart() {
   }
 }
 
-// ── 排行榜：本月 Top 5 ────────────────────────────────
 export function updateMonthlyRanking() {
   const listEl  = document.getElementById("monthlyRankingList");
   const emptyEl = document.getElementById("monthlyRankingEmpty");
@@ -84,7 +86,7 @@ export function updateMonthlyRanking() {
 
   const now = new Date(), y = now.getFullYear(), m = now.getMonth();
   const totals = {};
-  S.expenses
+  window.AppStore.expenses
     .filter(e => { const d = new Date(e.timestamp); return d.getFullYear() === y && d.getMonth() === m; })
     .forEach(e => { const c = e.category || "其他"; totals[c] = (totals[c] || 0) + Number(e.amount); });
 
@@ -93,18 +95,15 @@ export function updateMonthlyRanking() {
 
   emptyEl.classList.add("hidden");
   const total5 = top5.reduce((s, [, a]) => s + a, 0);
-  const RANK   = [
-    { bg: "#d97706", color: "#fff",    label: "#1" },
-    { bg: "#64748b", color: "#fff",    label: "#2" },
-    { bg: "#b45309", color: "#fff",    label: "#3" },
-    { bg: "#e2e8f0", color: "#475569", label: "#4" },
+  const RANK = [
+    { bg: "#d97706", color: "#fff", label: "#1" }, { bg: "#64748b", color: "#fff", label: "#2" },
+    { bg: "#b45309", color: "#fff", label: "#3" }, { bg: "#e2e8f0", color: "#475569", label: "#4" },
     { bg: "#e2e8f0", color: "#475569", label: "#5" },
   ];
   listEl.innerHTML = top5.map(([cat, amt], i) => {
     const { chartColor } = categoryConfig[cat] || categoryConfig["其他"];
     const pct = total5 > 0 ? (amt / total5) * 100 : 0;
-    return `
-      <li class="rounded-2xl border border-slate-100 bg-white/80 px-3.5 py-3">
+    return `<li class="rounded-2xl border border-slate-100 bg-white/80 px-3.5 py-3">
         <div class="flex items-center justify-between gap-2">
           <span class="flex items-center gap-2.5 min-w-0">
             <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
@@ -120,29 +119,24 @@ export function updateMonthlyRanking() {
   }).join("");
 }
 
-// ── 折线图配置工厂 ────────────────────────────────────
 export function buildWeeklyChartConfig(values, xLabels, dayCats) {
   return {
     type: "line",
     data: {
-      labels:   xLabels,
+      labels: xLabels,
       datasets: [{
         data: values, dayCats,
-        borderColor:          "#6366f1",
-        backgroundColor:      "rgba(99,102,241,0.07)",
-        borderWidth:          2,
+        borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.07)",
+        borderWidth: 2,
         pointBackgroundColor: values.map(v => v > 0 ? "#6366f1" : "rgba(99,102,241,0.25)"),
-        pointBorderColor:     "#fff",
-        pointBorderWidth:     2,
-        pointRadius:          5,
-        pointHoverRadius:     7,
+        pointBorderColor: "#fff", pointBorderWidth: 2, pointRadius: 5, pointHoverRadius: 7,
         fill: true, tension: 0.42,
       }],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       animation: { duration: 700, easing: "easeInOutQuart" },
-      layout:    { padding: { top: 28 } },
+      layout: { padding: { top: 28 } },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -162,7 +156,7 @@ export function buildWeeklyChartConfig(values, xLabels, dayCats) {
           },
         },
         datalabels: {
-          display:   ctx => ctx.dataset.data[ctx.dataIndex] > 0,
+          display: ctx => ctx.dataset.data[ctx.dataIndex] > 0,
           anchor: "end", align: "top", offset: 2,
           color: "#4f46e5", font: { size: 10, weight: "600" },
           formatter: v => v >= 1000 ? "¥" + (v / 1000).toFixed(1) + "k" : "¥" + Math.round(v),
@@ -175,10 +169,8 @@ export function buildWeeklyChartConfig(values, xLabels, dayCats) {
         },
         y: {
           grid: { color: "rgba(0,0,0,0.04)", drawTicks: false }, border: { display: false },
-          ticks: {
-            font: { size: 10 }, color: "#94a3b8", maxTicksLimit: 4,
-            callback: v => v === 0 ? "0" : (v >= 1000 ? "¥" + (v / 1000).toFixed(1) + "k" : "¥" + v),
-          },
+          ticks: { font: { size: 10 }, color: "#94a3b8", maxTicksLimit: 4,
+            callback: v => v === 0 ? "0" : (v >= 1000 ? "¥" + (v / 1000).toFixed(1) + "k" : "¥" + v) },
           beginAtZero: true,
         },
       },
@@ -186,7 +178,6 @@ export function buildWeeklyChartConfig(values, xLabels, dayCats) {
   };
 }
 
-// ── 本周折线图（主视图 + 历史页同步） ─────────────────
 export function updateWeeklyChart() {
   const now = new Date(), dow = now.getDay();
   const startOfWeek = new Date(now);
@@ -204,7 +195,7 @@ export function updateWeeklyChart() {
     dayKeys.push(getDateKey(d));
     xLabels.push([DAY_NAMES[i], `${d.getMonth() + 1}/${d.getDate()}`]);
   }
-  S.expenses.forEach(e => {
+  window.AppStore.expenses.forEach(e => {
     const idx = dayKeys.indexOf(getDateKey(new Date(e.timestamp)));
     if (idx === -1) return;
     const amt = Number(e.amount);
@@ -214,14 +205,12 @@ export function updateWeeklyChart() {
   });
   const ptColors = values.map(v => v > 0 ? "#6366f1" : "rgba(99,102,241,0.25)");
 
-  // 复用辅助：更新或创建折线图实例
   const syncChart = (canvasId, key) => {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     if (C[key]) {
-      C[key].data.labels = xLabels;
       const ds = C[key].data.datasets[0];
-      ds.data = values; ds.dayCats = dayCats; ds.pointBackgroundColor = ptColors;
+      C[key].data.labels = xLabels; ds.data = values; ds.dayCats = dayCats; ds.pointBackgroundColor = ptColors;
       C[key].update("active");
     } else {
       C[key] = new Chart(canvas, buildWeeklyChartConfig(values, xLabels, dayCats));

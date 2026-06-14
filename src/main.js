@@ -1,68 +1,65 @@
 import './style.css';
-import { S } from './state.js';
 import {
-  sb,
-  loadExpenseCache, saveExpenseCache,
+  sb, loadExpenseCache, saveExpenseCache,
   loadHistoryCache, saveHistoryCache, clearHistoryCache,
-  loadPendingUploads,
   saveExpenseToCloud, flushPendingUploads,
   fetchFamilyExpenses, deleteExpenseFromCloud,
   fetchFamilyBudget, saveFamilyBudgetToCloud,
   fetchLastMonthTotal, syncFamilyMembers, registerAllLocalFamilies,
 } from './db.js';
-import {
-  formatMoney, getDateKey, buildTimestampFromDateInput,
-  animateNumber, animateNumberRaw, categoryConfig, currentYM,
-} from './utils.js';
-import { updateChart, updateWeeklyChart, updateMonthlyRanking } from './charts.js';
+import { updateChart, updateWeeklyChart, updateMonthlyRanking, categoryConfig, formatMoney, getDateKey } from './charts.js';
 
-// ── 常量 ──────────────────────────────────────────────
-const BUDGET_KEY   = "wallet_budget_v1";
-const storageKey   = "wallet_added_expenses_v2";
-const SESSION_KEY  = "wallet_session_v1";
-const FAMILIES_KEY = "wallet_families_v1";
+// ── window.AppStore 全局状态中心 ──────────────────────
+const AS = window.AppStore = { expenses: [], session: null, showToast: null, loadFamilies: null, saveFamilies: null };
+
+const BUDGET_KEY        = "wallet_budget_v1";
+const SESSION_KEY       = "wallet_session_v1";
+const FAMILIES_KEY      = "wallet_families_v1";
 const RECENT_FILTER_KEY = "wallet_recent_filter_bootstrapped_v1";
-const SWIPE_MAX    = 88;
-const SWIPE_TRIGGER = 56;
+const SWIPE_MAX = 88, SWIPE_TRIGGER = 56;
 
-// ── 模块级状态 ────────────────────────────────────────
-let budget = (() => { const v = Number(localStorage.getItem(BUDGET_KEY)); return v > 0 ? v : 8000; })();
-let totalSpent              = 0;
+let budget                    = (() => { const v = Number(localStorage.getItem(BUDGET_KEY)); return v > 0 ? v : 8000; })();
+let totalSpent                = 0;
 let recentExpenseFilterMember = null;
-let lastMonthTotalCached    = 0;
-let realtimeChannel         = null;
-let _splashShownAt          = 0;
-const deletingExpenseIds    = new Set();
+let lastMonthTotalCached      = 0;
+let realtimeChannel           = null;
+let _splashShownAt            = 0;
+const deletingExpenseIds      = new Set();
+
+// ── 内联工具（替代已删除的 utils.js） ─────────────────
+const currentYM = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; };
+const buildTimestampFromDateInput = val => {
+  if (!val) return new Date().toISOString();
+  const [y, mo, d] = val.split("-").map(Number), n = new Date();
+  return new Date(y, mo-1, d, n.getHours(), n.getMinutes(), n.getSeconds()).toISOString();
+};
+const animateNumberRaw = (el, target, fmt) => {
+  if (!el) return;
+  const from = parseFloat(el.textContent.replace(/[^\d.]/g, "")) || 0, t0 = performance.now();
+  const tick = t => { const p = Math.min((t-t0)/380,1), ease = 1-Math.pow(1-p,3); el.textContent = fmt(from+(target-from)*ease); if(p<1) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+};
+const animateNumber = (el, v) => animateNumberRaw(el, v, n => "¥ " + n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
 // ── Toast ─────────────────────────────────────────────
 const showToast = (() => {
   let el = null, timer = null;
   return msg => {
     if (!el) { el = document.createElement("div"); el.className = "sync-toast"; document.body.appendChild(el); }
-    el.textContent = msg;
-    el.classList.add("show");
-    clearTimeout(timer);
-    timer = setTimeout(() => el.classList.remove("show"), 2400);
+    el.textContent = msg; el.classList.add("show");
+    clearTimeout(timer); timer = setTimeout(() => el.classList.remove("show"), 2400);
   };
 })();
+AS.showToast = showToast;
 
-// 挂载到 S，db.js / charts.js 可直接读取
-S.showToast    = showToast;
-S.loadFamilies = loadFamiliesData;
-S.saveFamilies = saveFamiliesData;
-
-// ── Session 管理 ──────────────────────────────────────
-function loadSession()   { try { const r = localStorage.getItem(SESSION_KEY); return r ? JSON.parse(r) : null; } catch { return null; } }
-function saveSession(s)  { S.session = s; localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
-function clearSession()  { S.session = null; localStorage.removeItem(SESSION_KEY); }
-
-// ── 家庭数据 ──────────────────────────────────────────
-function loadFamiliesData() {
-  try { const r = localStorage.getItem(FAMILIES_KEY); if (r) { const d = JSON.parse(r); if (d?.families) return d; } }
-  catch {}
-  return { lastFamily: "", families: {} };
-}
-function saveFamiliesData(d) { localStorage.setItem(FAMILIES_KEY, JSON.stringify(d)); }
+// ── Session & 家庭数据 ────────────────────────────────
+const loadSession    = () => { const r = localStorage.getItem(SESSION_KEY); return r ? JSON.parse(r) : null; };
+const saveSession    = s => { AS.session = s; localStorage.setItem(SESSION_KEY, JSON.stringify(s)); };
+const clearSession   = () => { AS.session = null; localStorage.removeItem(SESSION_KEY); };
+const loadFamiliesData = () => { const r = localStorage.getItem(FAMILIES_KEY); if (r) { const d = JSON.parse(r); if (d?.families) return d; } return { lastFamily: "", families: {} }; };
+const saveFamiliesData = d => localStorage.setItem(FAMILIES_KEY, JSON.stringify(d));
+AS.loadFamilies = loadFamiliesData;
+AS.saveFamilies = saveFamiliesData;
 
 // ── DOM refs ──────────────────────────────────────────
 const totalEl         = document.getElementById("monthlyTotal");
@@ -93,18 +90,16 @@ const budgetOverlay   = document.getElementById("budgetOverlay");
 const budgetInput     = document.getElementById("budgetInput");
 const cancelBudgetBtn = document.getElementById("cancelBudgetBtn");
 const saveBudgetBtn   = document.getElementById("saveBudgetBtn");
-
 let deferredInstallPrompt = null;
 
-// ── 摘要卡片更新 ──────────────────────────────────────
+// ── 摘要卡片 ──────────────────────────────────────────
 function updateSummary() {
   animateNumber(totalEl, totalSpent);
   animateNumber(remainingEl, Math.max(0, budget - totalSpent));
   animateNumberRaw(budgetValueEl, budget, v => v.toLocaleString("zh-CN"));
-
-  const bar        = document.getElementById("budgetProgressBar");
+  const bar = document.getElementById("budgetProgressBar");
   const overrunTag = document.getElementById("budgetOverrunTag");
-  const card       = document.getElementById("budgetCard");
+  const card = document.getElementById("budgetCard");
   if (!bar) return;
   const pct = budget > 0 ? Math.min((totalSpent / budget) * 100, 100) : 0;
   bar.style.width = pct + "%";
@@ -120,11 +115,10 @@ function updateSummary() {
   }
 }
 
-// ── 环比分析（合并 updateMomInline + updateInsightSection） ──
+// ── 环比分析 ──────────────────────────────────────────
 function updateMoMBadge(cur, last) {
   lastMonthTotalCached = last ?? lastMonthTotalCached;
   const lmt = lastMonthTotalCached;
-
   const stripEl = document.getElementById("momInline");
   if (stripEl) {
     if (!lmt) { stripEl.classList.add("hidden"); }
@@ -136,24 +130,18 @@ function updateMoMBadge(cur, last) {
       else               { stripEl.textContent = "与上月持平"; stripEl.style.color = "#94a3b8"; }
     }
   }
-
   const section = document.getElementById("insightSection");
   if (!section) return;
   const e = {
-    badge: document.getElementById("insightBadge"),
-    delta: document.getElementById("insightDelta"),
-    label: document.getElementById("insightDeltaLabel"),
-    cur:   document.getElementById("insightCurrent"),
-    last:  document.getElementById("insightLast"),
-    barC:  document.getElementById("insightBarCurrent"),
-    barL:  document.getElementById("insightBarLast"),
-    pctC:  document.getElementById("insightCurrentPct"),
+    badge: document.getElementById("insightBadge"),    delta: document.getElementById("insightDelta"),
+    label: document.getElementById("insightDeltaLabel"), cur: document.getElementById("insightCurrent"),
+    last:  document.getElementById("insightLast"),     barC: document.getElementById("insightBarCurrent"),
+    barL:  document.getElementById("insightBarLast"),  pctC: document.getElementById("insightCurrentPct"),
     pctL:  document.getElementById("insightLastPct"),
   };
   section.classList.remove("hidden");
   e.cur.textContent  = formatMoney(cur);
   e.last.textContent = lmt > 0 ? formatMoney(lmt) : "¥ 0";
-
   if (!lmt) {
     e.delta.textContent = "-"; e.delta.className = "text-2xl font-bold tracking-tight text-slate-400 tabular-nums";
     e.label.textContent = "首月开始记录"; e.badge.textContent = "首月记录"; e.badge.className = "insight-badge";
@@ -161,7 +149,6 @@ function updateMoMBadge(cur, last) {
     e.pctC.textContent = e.pctL.textContent = "";
     return;
   }
-
   const diff = cur - lmt, pct = Math.abs((diff / lmt) * 100).toFixed(1), max = Math.max(cur, lmt, 1);
   if (diff < 0) {
     e.delta.textContent = `${pct}%`; e.delta.className = "text-2xl font-bold tracking-tight text-emerald-500 tabular-nums";
@@ -179,28 +166,21 @@ function updateMoMBadge(cur, last) {
   e.pctL.textContent = lmt > 0 ? lPct + "%" : "0%";
 }
 
-// ── 默认日期 ──────────────────────────────────────────
-function setDefaultExpenseDate() {
-  if (!dateInput) return;
-  dateInput.value = dateInput.max = getDateKey(new Date());
-}
-
 // ── 成员筛选 ──────────────────────────────────────────
-function recordMatchesRecentFilter(r) {
+const recordMatchesRecentFilter = r => {
   if (!recentExpenseFilterMember) return true;
   const m = r.member || "";
-  return m === recentExpenseFilterMember || (!m && recentExpenseFilterMember === S.session.member);
-}
-function gatherMemberNames() {
+  return m === recentExpenseFilterMember || (!m && recentExpenseFilterMember === AS.session.member);
+};
+const gatherMemberNames = () => {
   const names = new Set();
-  if (S.session?.member) names.add(S.session.member);
-  try { (loadFamiliesData().families?.[S.session.familyCode]?.members || []).forEach(x => x && names.add(x)); } catch {}
-  S.expenses.forEach(e => { if (e.member) names.add(e.member); });
+  if (AS.session?.member) names.add(AS.session.member);
+  (loadFamiliesData().families?.[AS.session.familyCode]?.members || []).forEach(x => x && names.add(x));
+  AS.expenses.forEach(e => { if (e.member) names.add(e.member); });
   return Array.from(names).sort((a, b) => a.localeCompare(b, "zh-CN"));
-}
-function truncateLabel(s) {
-  const chars = [...String(s || "")]; return chars.length <= 5 ? chars.join("") : chars.slice(0, 5).join("") + "...";
-}
+};
+const truncateLabel = s => { const chars = [...String(s || "")]; return chars.length <= 5 ? chars.join("") : chars.slice(0, 5).join("") + "..."; };
+
 function updateRecentConsumeHeading() {
   const el = document.getElementById("recentConsumeHeading");
   if (el) el.textContent = recentExpenseFilterMember ? `${recentExpenseFilterMember}的消费` : "全部消费";
@@ -209,7 +189,7 @@ function updateRecentFilteredTotalStrip() {
   const capEl = document.getElementById("recentFilteredTotalCaption");
   const amtEl = document.getElementById("recentFilteredTotalAmount");
   if (!amtEl || !capEl) return;
-  const total = S.expenses.reduce((s, e) => recordMatchesRecentFilter(e) ? s + (Number(e.amount) || 0) : s, 0);
+  const total = AS.expenses.reduce((s, e) => recordMatchesRecentFilter(e) ? s + (Number(e.amount) || 0) : s, 0);
   amtEl.textContent = formatMoney(total);
   capEl.textContent = recentExpenseFilterMember
     ? `${recentExpenseFilterMember} · 下列账单本月合计`
@@ -217,7 +197,7 @@ function updateRecentFilteredTotalStrip() {
 }
 function refreshRecentMemberFilterUI() {
   const sel = document.getElementById("recentMemberFilter");
-  if (!sel || !S.session) return;
+  if (!sel || !AS.session) return;
   const members = gatherMemberNames();
   sel.innerHTML = `<option value="__all__">全部</option>`;
   members.forEach(nm => {
@@ -231,25 +211,9 @@ function refreshRecentMemberFilterUI() {
 }
 
 // ── 排序 ──────────────────────────────────────────────
-function expenseMs(r) {
-  const raw = r.timestamp ?? r.created_at ?? null;
-  if (raw == null) return 0;
-  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-  const ms = new Date(raw).getTime();
-  return Number.isFinite(ms) ? ms : 0;
-}
-function daySerial(ms) {
-  if (!ms) return 0;
-  const d = new Date(ms); return d.getFullYear() * 1e4 + (d.getMonth() + 1) * 100 + d.getDate();
-}
-function sortForDisplay(list) {
-  return [...list].sort((a, b) => {
-    const ma = expenseMs(a), mb = expenseMs(b), da = daySerial(ma), db = daySerial(mb);
-    if (db !== da) return db - da;
-    if (mb !== ma) return mb - ma;
-    return String(b.id || "").localeCompare(String(a.id || ""));
-  });
-}
+const expenseMs = r => { const raw = r.timestamp ?? r.created_at ?? null; if (raw == null) return 0; if (typeof raw === "number" && Number.isFinite(raw)) return raw; const ms = new Date(raw).getTime(); return Number.isFinite(ms) ? ms : 0; };
+const daySerial = ms => { if (!ms) return 0; const d = new Date(ms); return d.getFullYear() * 1e4 + (d.getMonth()+1) * 100 + d.getDate(); };
+const sortForDisplay = list => [...list].sort((a, b) => { const ma = expenseMs(a), mb = expenseMs(b), da = daySerial(ma), db = daySerial(mb); return db !== da ? db-da : mb !== ma ? mb-ma : String(b.id||"").localeCompare(String(a.id||"")); });
 
 // ── 骨架屏 & 空态 ─────────────────────────────────────
 const _emptyStateEl = document.getElementById("expenseEmptyState");
@@ -269,22 +233,22 @@ function showExpensesSkeleton() {
   }
   updateRecentFilteredTotalStrip();
 }
-function hideExpensesSkeleton() { expenseList.querySelectorAll("[data-skeleton]").forEach(n => n.remove()); }
+const hideExpensesSkeleton = () => expenseList.querySelectorAll("[data-skeleton]").forEach(n => n.remove());
 function syncEmptyState(count) {
   if (!_emptyStateEl) return;
   _emptyStateEl.classList.toggle("hidden", count > 0);
   _emptyStateEl.classList.toggle("flex",   count === 0);
 }
 
-// ── 行创建（删除按钮改为事件委托，不再每行绑定） ──────
+// ── 行创建 ────────────────────────────────────────────
 function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
   const article = document.createElement("article");
-  article.className       = "relative overflow-hidden";
+  article.className = "relative overflow-hidden";
   article.dataset.recordId = record.id;
   article.dataset.dynamic  = "1";
 
   const d = new Date(record.timestamp ?? record.created_at);
-  const time   = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  const time    = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
   const isToday = getDateKey(d) === getDateKey(new Date());
   const config  = categoryConfig[record.category] || categoryConfig["其他"];
 
@@ -319,7 +283,8 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
 
   article.querySelector(".name-el").textContent   = record.name;
   article.querySelector(".amount-el").textContent = `- ${formatMoney(Number(record.amount))}`;
-  if (record.note) article.querySelector(".note-el")?.textContent && (article.querySelector(".note-el").textContent = record.note);
+  const noteEl = article.querySelector(".note-el");
+  if (noteEl && record.note) noteEl.textContent = record.note;
 
   if (enableSwipeDelete) {
     const rowContentEl = article.querySelector(".row-content");
@@ -334,7 +299,6 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
       startX = e.touches[0].clientX; startY = e.touches[0].clientY;
       swiping = true; triggered = false;
     }, { passive: true });
-
     article.addEventListener("touchmove", e => {
       if (!swiping || triggered) return;
       const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
@@ -347,7 +311,6 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
         swipeIconEl.style.transform = `translateX(${Math.max(0, 16 + shift * 0.25)}px)`;
       }
     }, { passive: true });
-
     article.addEventListener("touchend", async () => {
       if (!swiping || triggered) return;
       swiping = false;
@@ -361,7 +324,7 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
   return article;
 }
 
-// ── 删除按钮事件委托（替代每行绑定，统一处理两个列表） ─
+// ── 删除按钮事件委托 ──────────────────────────────────
 function bindListDelegation(list) {
   if (!list) return;
   list.addEventListener("pointerdown", e => {
@@ -381,26 +344,21 @@ function bindListDelegation(list) {
 }
 bindListDelegation(expenseList);
 
-// ── 渲染主列表 ────────────────────────────────────────
-function renderExpenses() {
+// ── 渲染 & 汇总 ───────────────────────────────────────
+const renderExpenses = () => {
   hideExpensesSkeleton();
-  const sorted = sortForDisplay(S.expenses.filter(recordMatchesRecentFilter));
+  const sorted = sortForDisplay(AS.expenses.filter(recordMatchesRecentFilter));
   expenseList.replaceChildren(...sorted.map(r => createExpenseRow(r)));
   syncEmptyState(sorted.length);
   updateRecentFilteredTotalStrip();
-}
-
-function refreshView() { renderExpenses(); recalculateTotal(); }
-
+};
+const refreshView = () => { renderExpenses(); recalculateTotal(); };
 function recalculateTotal() {
   const n = new Date(), y = n.getFullYear(), m = n.getMonth();
-  totalSpent = S.expenses
+  totalSpent = AS.expenses
     .filter(e => { const d = new Date(e.timestamp); return d.getFullYear() === y && d.getMonth() === m; })
     .reduce((sum, item) => sum + Number(item.amount), 0);
-  updateSummary();
-  updateChart();
-  updateMonthlyRanking();
-  updateWeeklyChart();
+  updateSummary(); updateChart(); updateMonthlyRanking(); updateWeeklyChart();
   updateMoMBadge(totalSpent, lastMonthTotalCached);
   updateRecentFilteredTotalStrip();
 }
@@ -414,27 +372,27 @@ async function handleDeleteRecord(id, { sourceButton } = {}) {
   deletingExpenseIds.add(id);
   if (sourceButton) { sourceButton.disabled = true; sourceButton.classList.add("opacity-40", "cursor-not-allowed"); }
 
-  const snapshot = [...S.expenses];
-  S.expenses = S.expenses.filter(e => e.id !== id);
-  saveExpenseCache(S.session.familyCode, S.expenses);
+  const snapshot = [...AS.expenses];
+  AS.expenses = AS.expenses.filter(e => e.id !== id);
+  saveExpenseCache(AS.session.familyCode, AS.expenses);
   refreshView();
   if (historyLoaded) await loadHistoryMonth(historyDate.year, historyDate.month);
 
   try {
     if (!await deleteExpenseFromCloud(id)) {
-      S.expenses = snapshot; saveExpenseCache(S.session.familyCode, snapshot);
+      AS.expenses = snapshot; saveExpenseCache(AS.session.familyCode, snapshot);
       refreshView();
       if (historyLoaded) await loadHistoryMonth(historyDate.year, historyDate.month);
       showToast("删除失败，已恢复这笔账单。请检查网络后重试");
     } else {
       const fresh = await fetchFamilyExpenses();
-      S.expenses = fresh; saveExpenseCache(S.session.familyCode, fresh); clearHistoryCache(S.session.familyCode);
+      AS.expenses = fresh; saveExpenseCache(AS.session.familyCode, fresh); clearHistoryCache(AS.session.familyCode);
       refreshView();
       if (historyLoaded) await loadHistoryMonth(historyDate.year, historyDate.month);
       showToast("已删除账单 ✓");
     }
   } catch {
-    S.expenses = snapshot; saveExpenseCache(S.session.familyCode, snapshot);
+    AS.expenses = snapshot; saveExpenseCache(AS.session.familyCode, snapshot);
     refreshView();
     if (historyLoaded) await loadHistoryMonth(historyDate.year, historyDate.month);
     showToast("删除异常，已恢复这笔账单。请稍后重试");
@@ -444,27 +402,25 @@ async function handleDeleteRecord(id, { sourceButton } = {}) {
   }
 }
 
-// ── Modal（键盘/viewport 同步已内联，不再拆 4 函数） ──
+// ── Modal ─────────────────────────────────────────────
 let _modalSavedScrollY = 0, _vvCleanup = null;
 
 function openModal() {
   if (!modal.classList.contains("hidden")) return;
   overlay.classList.remove("hidden");
   modal.classList.remove("hidden");
-  setDefaultExpenseDate();
-
+  dateInput.value = dateInput.max = getDateKey(new Date());
   _modalSavedScrollY = window.scrollY || 0;
   document.body.style.top = `${-_modalSavedScrollY}px`;
   document.documentElement.classList.add("modal-sheet-open");
   document.body.classList.add("modal-sheet-open");
-
   const vv = window.visualViewport;
   const sync = () => {
     const narrow  = window.matchMedia("(max-width: 639px)").matches;
     const overlap = vv ? Math.max(0, window.innerHeight - vv.offsetTop - vv.height) : 0;
     modal.style.setProperty("--keyboard-overlap", overlap ? `${overlap}px` : "0px");
     if (vv && narrow) { modal.style.setProperty("--vv-left", `${vv.offsetLeft}px`); modal.style.setProperty("--vv-width", `${vv.width}px`); }
-    else              { modal.style.removeProperty("--vv-left"); modal.style.removeProperty("--vv-width"); }
+    else { modal.style.removeProperty("--vv-left"); modal.style.removeProperty("--vv-width"); }
   };
   sync();
   if (vv) { vv.addEventListener("resize", sync); vv.addEventListener("scroll", sync); }
@@ -476,7 +432,6 @@ function openModal() {
   };
   setTimeout(() => nameInput.focus(), 0);
 }
-
 function closeModal() {
   if (modal.classList.contains("hidden")) return;
   if (_vvCleanup) { _vvCleanup(); _vvCleanup = null; }
@@ -488,46 +443,45 @@ function closeModal() {
   overlay.classList.add("hidden");
   modal.classList.add("hidden");
   form.reset();
-  setDefaultExpenseDate();
+  dateInput.value = dateInput.max = getDateKey(new Date());
 }
 
 // ── Realtime ──────────────────────────────────────────
 function subscribeRealtime() {
   if (realtimeChannel) { sb.removeChannel(realtimeChannel); realtimeChannel = null; }
   realtimeChannel = sb
-    .channel(`family-${S.session.familyCode}`)
+    .channel(`family-${AS.session.familyCode}`)
     .on("postgres_changes",
-      { event: "INSERT", schema: "public", table: "expenses", filter: `family_code=eq.${S.session.familyCode}` },
+      { event: "INSERT", schema: "public", table: "expenses", filter: `family_code=eq.${AS.session.familyCode}` },
       payload => {
         const row = payload.new;
-        if (S.expenses.some(e => e.id === row.id)) return;
+        if (AS.expenses.some(e => e.id === row.id)) return;
         const rn = new Date(), rd = new Date(row.created_at);
         if (rd.getFullYear() !== rn.getFullYear() || rd.getMonth() !== rn.getMonth()) return;
         const record = { id: row.id, name: row.name, amount: row.amount, category: row.category,
           note: row.note, member: row.member, timestamp: row.created_at, created_at: row.created_at };
-        S.expenses.unshift(record);
-        saveExpenseCache(S.session.familyCode, S.expenses);
+        AS.expenses.unshift(record);
+        saveExpenseCache(AS.session.familyCode, AS.expenses);
         renderExpenses();
-        const el = expenseList.querySelector(`[data-record-id="${record.id}"]`);
-        if (el) el.classList.add("sync-flash");
+        expenseList.querySelector(`[data-record-id="${record.id}"]`)?.classList.add("sync-flash");
         recalculateTotal();
       })
     .on("postgres_changes",
-      { event: "DELETE", schema: "public", table: "expenses", filter: `family_code=eq.${S.session.familyCode}` },
+      { event: "DELETE", schema: "public", table: "expenses", filter: `family_code=eq.${AS.session.familyCode}` },
       payload => {
         const id = payload.old?.id;
         if (!id) return;
-        S.expenses = S.expenses.filter(e => e.id !== id);
-        saveExpenseCache(S.session.familyCode, S.expenses);
+        AS.expenses = AS.expenses.filter(e => e.id !== id);
+        saveExpenseCache(AS.session.familyCode, AS.expenses);
         refreshView();
         if (historyLoaded) loadHistoryMonth(historyDate.year, historyDate.month);
       })
     .subscribe(status => { syncDot.classList.toggle("hidden", status !== "SUBSCRIBED"); });
 }
-function unsubscribeRealtime() {
+const unsubscribeRealtime = () => {
   if (realtimeChannel) { sb.removeChannel(realtimeChannel); realtimeChannel = null; }
   syncDot.classList.add("hidden");
-}
+};
 
 // ── 启动遮罩 ──────────────────────────────────────────
 function dismissSplashScreen() {
@@ -535,50 +489,33 @@ function dismissSplashScreen() {
   if (!el || el.dataset.done === "1") return;
   el.dataset.done = "1";
   const wait = Math.max(0, 720 - (performance.now() - _splashShownAt));
-  setTimeout(() => {
-    el.classList.add("fade-out");
-    setTimeout(() => { el.style.display = "none"; el.remove(); }, 800);
-  }, wait);
-}
-
-// ── Session 应用 & 旧数据迁移 ─────────────────────────
-function applySession() {
-  loginOverlay.classList.add("hidden");
-  memberLabel.textContent = `🏠 ${S.session.familyCode}  ·  ${S.session.member}`;
-}
-
-async function migrateOldData() {
-  let orphans = [];
-  try { const r = localStorage.getItem(storageKey); if (r) orphans = JSON.parse(r); } catch {}
-  const toUpload = orphans.filter(r => !r.family_code);
-  if (!toUpload.length) { localStorage.removeItem(storageKey); return; }
-  await Promise.all(toUpload.map(r => sb.from("expenses").upsert({
-    id: r.id, family_code: S.session.familyCode, member: S.session.member,
-    name: r.name, amount: r.amount, category: r.category || "其他",
-    note: r.note || null, created_at: r.timestamp || new Date().toISOString(),
-  })));
-  localStorage.removeItem(storageKey);
+  setTimeout(() => { el.classList.add("fade-out"); setTimeout(() => { el.style.display = "none"; el.remove(); }, 800); }, wait);
 }
 
 // ── initApp ───────────────────────────────────────────
 async function initApp() {
-  applySession();
+  loginOverlay.classList.add("hidden");
+  memberLabel.textContent = `🏠 ${AS.session.familyCode}  ·  ${AS.session.member}`;
 
-  // 首次登录：默认按当前成员筛选
-  recentExpenseFilterMember = localStorage.getItem(RECENT_FILTER_KEY) ? S.session.member : null;
+  recentExpenseFilterMember = localStorage.getItem(RECENT_FILTER_KEY) ? AS.session.member : null;
+  localStorage.removeItem("wallet_expense_cache_v1");
 
-  try { localStorage.removeItem("wallet_expense_cache_v1"); } catch {}
-  await migrateOldData();
-
-  const cached = loadExpenseCache(S.session.familyCode);
-  if (cached.length > 0) {
-    S.expenses = cached;
-    refreshRecentMemberFilterUI();
-    refreshView();
-  } else {
-    refreshRecentMemberFilterUI();
-    showExpensesSkeleton();
+  let orphans = [];
+  const raw = localStorage.getItem("wallet_added_expenses_v2");
+  if (raw) orphans = JSON.parse(raw);
+  const toUpload = orphans.filter(r => !r.family_code);
+  if (toUpload.length) {
+    await Promise.all(toUpload.map(r => sb.from("expenses").upsert({
+      id: r.id, family_code: AS.session.familyCode, member: AS.session.member,
+      name: r.name, amount: r.amount, category: r.category || "其他",
+      note: r.note || null, created_at: r.timestamp || new Date().toISOString(),
+    })));
+    localStorage.removeItem("wallet_added_expenses_v2");
   }
+
+  const cached = loadExpenseCache(AS.session.familyCode);
+  if (cached.length > 0) { AS.expenses = cached; refreshRecentMemberFilterUI(); refreshView(); }
+  else { refreshRecentMemberFilterUI(); showExpensesSkeleton(); }
 
   registerAllLocalFamilies();
   syncFamilyMembers(() => refreshRecentMemberFilterUI());
@@ -587,41 +524,33 @@ async function initApp() {
   const [cloudBudget, lastMonthTotal, fresh] = await Promise.all([
     fetchFamilyBudget(), fetchLastMonthTotal(), fetchFamilyExpenses(),
   ]);
-
   if (cloudBudget && cloudBudget !== budget) { budget = cloudBudget; localStorage.setItem(BUDGET_KEY, String(budget)); }
 
   const freshSig  = fresh.map(e => e.id).join(",");
   const cachedSig = cached.map(e => e.id).join(",");
-  S.expenses = fresh;
-  saveExpenseCache(S.session.familyCode, fresh);
-  refreshRecentMemberFilterUI();
-  refreshView();
+  AS.expenses = fresh;
+  saveExpenseCache(AS.session.familyCode, fresh);
+  refreshRecentMemberFilterUI(); refreshView();
   updateMoMBadge(totalSpent, lastMonthTotal);
   if (cached.length > 0 && freshSig !== cachedSig) showToast("已同步最新账单 ✓");
 
   subscribeRealtime();
+  if (!localStorage.getItem(RECENT_FILTER_KEY)) localStorage.setItem(RECENT_FILTER_KEY, "1");
 
-  // 跨月自动重置
   let _lastKnownYM = currentYM();
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState !== "visible") return;
     const nowYM = currentYM();
     if (nowYM === _lastKnownYM) return;
     _lastKnownYM = nowYM;
-    S.expenses = [];
-    refreshRecentMemberFilterUI();
-    refreshView();
+    AS.expenses = [];
+    refreshRecentMemberFilterUI(); refreshView();
     showToast(`已切换到 ${nowYM.replace("-", "月").replace(/^\d{4}/, "")}月账单`);
     const [cb, lmt, fr] = await Promise.all([fetchFamilyBudget(), fetchLastMonthTotal(), fetchFamilyExpenses()]);
     if (cb && cb !== budget) { budget = cb; localStorage.setItem(BUDGET_KEY, String(budget)); }
-    S.expenses = fr;
-    saveExpenseCache(S.session.familyCode, fr);
-    refreshRecentMemberFilterUI();
-    refreshView();
-    updateMoMBadge(totalSpent, lmt);
+    AS.expenses = fr; saveExpenseCache(AS.session.familyCode, fr);
+    refreshRecentMemberFilterUI(); refreshView(); updateMoMBadge(totalSpent, lmt);
   });
-
-  try { if (!localStorage.getItem(RECENT_FILTER_KEY)) localStorage.setItem(RECENT_FILTER_KEY, "1"); } catch {}
 
   dismissSplashScreen();
 }
@@ -659,7 +588,7 @@ const memberNewInput   = document.getElementById("memberNewInput");
 const memberDropdown   = document.getElementById("memberDropdown");
 const memberHint       = document.getElementById("memberHint");
 
-let familiesData  = {}, currentFamily = "", currentMember = "";
+let familiesData = {}, currentFamily = "", currentMember = "";
 let familyMode = "dropdown", memberMode = "dropdown";
 
 const openFamilyDropdown  = () => { closeMemberDropdown(); renderLoginDropdown("family"); familyDropdown.classList.remove("hidden"); familySelectBtn.classList.add("open"); };
@@ -680,7 +609,6 @@ function switchMemberMode(mode, autoFocus = false) {
   if (mode !== "dropdown") { memberDropdown.classList.add("hidden"); if (autoFocus) setTimeout(() => memberNewInput.focus(), 0); }
 }
 
-// 合并家庭/成员下拉渲染
 function renderLoginDropdown(type) {
   const isFamily = type === "family";
   const dropdown = isFamily ? familyDropdown : memberDropdown;
@@ -719,10 +647,10 @@ function selectFamily(name) {
     else { memberSelectText.className = "custom-select-placeholder"; memberSelectText.textContent = "请选择昵称"; }
   } else { switchMemberMode("text"); memberNewInput.value = ""; }
 }
-function selectMember(name) {
+const selectMember = name => {
   currentMember = name;
   memberSelectText.className = "custom-select-value"; memberSelectText.textContent = name;
-}
+};
 
 familySelectBtn.addEventListener("click", e => { e.stopPropagation(); familyDropdown.classList.contains("hidden") ? openFamilyDropdown() : closeFamilyDropdown(); });
 memberSelectBtn.addEventListener("click", e => { e.stopPropagation(); memberDropdown.classList.contains("hidden") ? openMemberDropdown() : closeMemberDropdown(); });
@@ -731,11 +659,11 @@ document.addEventListener("click", e => {
   if (memberSelectWrap && !memberSelectWrap.contains(e.target)) closeMemberDropdown();
 });
 
-function setMemberHint(state, text) {
+const setMemberHint = (state, text) => {
   memberHint.className = "member-hint " + state;
   memberHint.textContent = text;
   memberHint.classList.toggle("hidden", !text || state === "hidden");
-}
+};
 
 let _memberLookupTimer = null;
 familyNewInput.addEventListener("input", () => {
@@ -821,7 +749,6 @@ loginForm.addEventListener("submit", async e => {
   const memberName = memberMode === "text" ? memberNewInput.value.trim() : currentMember;
   if (!familyName || !memberName) { loginError.classList.remove("hidden"); return; }
   loginError.classList.add("hidden");
-
   if (!familiesData.families[familyName]) {
     familiesData.families[familyName] = { lastMember: memberName, members: [memberName] };
   } else {
@@ -832,11 +759,9 @@ loginForm.addEventListener("submit", async e => {
   familiesData.lastFamily = familyName;
   saveFamiliesData(familiesData);
   sb.from("families").upsert({ family_code: familyName, member: memberName, updated_at: new Date().toISOString() }, { onConflict: "family_code,member" });
-
   saveSession({ familyCode: familyName, member: memberName });
   await initApp();
 });
-
 logoutBtn.addEventListener("click", () => { unsubscribeRealtime(); clearSession(); location.reload(); });
 
 // ── FAB & 主表单 ──────────────────────────────────────
@@ -847,8 +772,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && !modal.cla
 
 document.getElementById("recentMemberFilter")?.addEventListener("change", e => {
   recentExpenseFilterMember = e.target.value === "__all__" ? null : e.target.value;
-  updateRecentConsumeHeading();
-  renderExpenses();
+  updateRecentConsumeHeading(); renderExpenses();
 });
 
 form.addEventListener("submit", async e => {
@@ -863,16 +787,15 @@ form.addEventListener("submit", async e => {
   const ts = buildTimestampFromDateInput(dateInput?.value || "");
   const record = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    name, amount, category, note, member: S.session.member, timestamp: ts, created_at: ts,
+    name, amount, category, note, member: AS.session.member, timestamp: ts, created_at: ts,
   };
-
   const rd = new Date(record.timestamp), now2 = new Date();
   if (rd.getFullYear() === now2.getFullYear() && rd.getMonth() === now2.getMonth()) {
-    S.expenses.unshift(record);
-    saveExpenseCache(S.session.familyCode, S.expenses);
+    AS.expenses.unshift(record);
+    saveExpenseCache(AS.session.familyCode, AS.expenses);
     refreshView();
   } else {
-    clearHistoryCache(S.session.familyCode);
+    clearHistoryCache(AS.session.familyCode);
     showToast(`补账成功，已记录到 ${rd.getMonth() + 1}月${rd.getDate()}日 ✓`);
   }
   closeModal();
@@ -881,20 +804,20 @@ form.addEventListener("submit", async e => {
 
 // ── 历史账单视图 ──────────────────────────────────────
 const H = {
-  view:          document.getElementById("historyView"),
-  loading:       document.getElementById("historyLoading"),
-  summaryCard:   document.getElementById("historySummaryCard"),
-  totalAmount:   document.getElementById("historyTotalAmount"),
-  countEl:       document.getElementById("historyCountEl"),
-  membersEl:     document.getElementById("historyMembersEl"),
-  categoryBars:  document.getElementById("historyCategoryBars"),
-  expenseList:   document.getElementById("historyExpenseList"),
-  empty:         document.getElementById("historyEmpty"),
-  searchInput:   document.getElementById("historySearchInput"),
-  catChips:      document.getElementById("historyCatChips"),
-  filterCount:   document.getElementById("historyFilterCount"),
-  searchEmpty:   document.getElementById("historySearchEmpty"),
-  monthTitle:    document.getElementById("historyMonthTitle"),
+  view:         document.getElementById("historyView"),
+  loading:      document.getElementById("historyLoading"),
+  summaryCard:  document.getElementById("historySummaryCard"),
+  totalAmount:  document.getElementById("historyTotalAmount"),
+  countEl:      document.getElementById("historyCountEl"),
+  membersEl:    document.getElementById("historyMembersEl"),
+  categoryBars: document.getElementById("historyCategoryBars"),
+  expenseList:  document.getElementById("historyExpenseList"),
+  empty:        document.getElementById("historyEmpty"),
+  searchInput:  document.getElementById("historySearchInput"),
+  catChips:     document.getElementById("historyCatChips"),
+  filterCount:  document.getElementById("historyFilterCount"),
+  searchEmpty:  document.getElementById("historySearchEmpty"),
+  monthTitle:   document.getElementById("historyMonthTitle"),
 };
 bindListDelegation(H.expenseList);
 
@@ -905,16 +828,12 @@ const prevMonthBtn     = document.getElementById("prevMonthBtn");
 const nextMonthBtn     = document.getElementById("nextMonthBtn");
 const jumpToCurrentBtn = document.getElementById("jumpToCurrentBtn");
 
-let _historyExpenses = [];
-let _historyFilter   = { keyword: "", category: "" };
+let _historyExpenses = [], _historyFilter = { keyword: "", category: "" };
 const _now   = new Date();
 const NOW_YM = { year: _now.getFullYear(), month: _now.getMonth() + 1 };
 const MIN_YM = (() => { const d = new Date(_now.getFullYear() - 5, _now.getMonth(), 1); return { year: d.getFullYear(), month: d.getMonth() + 1 }; })();
-let historyDate   = { ...NOW_YM };
-let historyLoaded = false;
-let _historyInflight = null;
-
-function cmpYM(a, b) { return (a.year * 12 + a.month) - (b.year * 12 + b.month); }
+let historyDate = { ...NOW_YM }, historyLoaded = false, _historyInflight = null;
+const cmpYM = (a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month);
 
 function applyHistoryFilter() {
   const kw  = _historyFilter.keyword.trim().toLowerCase();
@@ -924,14 +843,13 @@ function applyHistoryFilter() {
     const matchKw  = !kw || ["name","note","member"].some(k => (e[k] || "").toLowerCase().includes(kw));
     return matchCat && matchKw;
   });
-
   H.expenseList.innerHTML = "";
   if (_historyExpenses.length && !result.length) {
     H.expenseList.classList.add("hidden");
     H.searchEmpty.classList.remove("hidden"); H.searchEmpty.classList.add("flex");
   } else {
     H.expenseList.classList.remove("hidden");
-    H.searchEmpty.classList.add("hidden");    H.searchEmpty.classList.remove("flex");
+    H.searchEmpty.classList.add("hidden"); H.searchEmpty.classList.remove("flex");
     sortForDisplay(result).forEach(r => H.expenseList.appendChild(createExpenseRow(r, { enableSwipeDelete: true })));
   }
   const isFiltering = !!(kw || cat);
@@ -953,8 +871,7 @@ function buildCatChips(expenses) {
     chip.addEventListener("click", () => {
       _historyFilter.category = cat === "全部" ? "" : cat;
       H.catChips.querySelectorAll(".cat-chip").forEach(c => c.classList.remove("active"));
-      chip.classList.add("active");
-      applyHistoryFilter();
+      chip.classList.add("active"); applyHistoryFilter();
     });
     H.catChips.appendChild(chip);
   });
@@ -969,7 +886,7 @@ H.searchInput.addEventListener("search", () => { _historyFilter.keyword = H.sear
 
 async function fetchMonthExpenses(year, month) {
   const { data, error } = await sb.from("expenses").select("*")
-    .eq("family_code", S.session.familyCode)
+    .eq("family_code", AS.session.familyCode)
     .gte("created_at", new Date(year, month - 1, 1).toISOString())
     .lt("created_at",  new Date(year, month,     1).toISOString())
     .order("created_at", { ascending: false });
@@ -981,9 +898,9 @@ async function fetchMonthExpenses(year, month) {
 }
 
 function renderHistoryMonth(year, month, expenses) {
-  H.monthTitle.textContent   = `${year}年${month}月`;
-  prevMonthBtn.disabled      = cmpYM({ year, month }, MIN_YM) <= 0;
-  nextMonthBtn.disabled      = cmpYM({ year, month }, NOW_YM) >= 0;
+  H.monthTitle.textContent = `${year}年${month}月`;
+  prevMonthBtn.disabled    = cmpYM({ year, month }, MIN_YM) <= 0;
+  nextMonthBtn.disabled    = cmpYM({ year, month }, NOW_YM) >= 0;
 
   const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
   H.totalAmount.textContent = formatMoney(total);
@@ -1014,7 +931,7 @@ function renderHistoryMonth(year, month, expenses) {
 
   _historyExpenses = expenses;
   _historyFilter   = { keyword: "", category: "" };
-  if (H.searchInput) H.searchInput.value = "";
+  H.searchInput.value = "";
   buildCatChips(expenses);
   H.filterCount.classList.add("hidden");
   H.searchEmpty.classList.add("hidden"); H.searchEmpty.classList.remove("flex");
@@ -1031,7 +948,7 @@ function renderHistoryMonth(year, month, expenses) {
 
 async function loadHistoryMonth(year, month) {
   const key = `${year}-${month}`;
-  const hit = loadHistoryCache(S.session.familyCode, year, month);
+  const hit = loadHistoryCache(AS.session.familyCode, year, month);
   if (hit) { _historyInflight = null; renderHistoryMonth(year, month, hit); return; }
   _historyInflight = key;
   H.loading.classList.remove("hidden"); H.loading.classList.add("flex");
@@ -1039,13 +956,12 @@ async function loadHistoryMonth(year, month) {
   const expenses = await fetchMonthExpenses(year, month);
   if (_historyInflight !== key) return;
   _historyInflight = null;
-  saveHistoryCache(S.session.familyCode, year, month, expenses);
+  saveHistoryCache(AS.session.familyCode, year, month, expenses);
   H.loading.classList.add("hidden"); H.loading.classList.remove("flex");
   H.summaryCard.style.opacity = "";
   renderHistoryMonth(year, month, expenses);
 }
 
-// Tab 切换
 const switchToHistory = () => {
   tabHistoryBtn.classList.add("active"); tabCurrentBtn.classList.remove("active");
   H.view.classList.remove("hidden"); H.view.classList.add("flex");
@@ -1062,7 +978,6 @@ tabCurrentBtn.addEventListener("click", () => {
   requestAnimationFrame(() => { updateSummary(); updateWeeklyChart(); });
 });
 tabHistoryBtn.addEventListener("click", switchToHistory);
-
 prevMonthBtn.addEventListener("click", () => {
   if (historyDate.month === 1) { historyDate.month = 12; historyDate.year--; } else { historyDate.month--; }
   loadHistoryMonth(historyDate.year, historyDate.month);
@@ -1072,13 +987,12 @@ nextMonthBtn.addEventListener("click", () => {
   loadHistoryMonth(historyDate.year, historyDate.month);
 });
 jumpToCurrentBtn.addEventListener("click", () => { historyDate = { ...NOW_YM }; loadHistoryMonth(historyDate.year, historyDate.month); });
-
 document.getElementById("viewAllBtn").addEventListener("click", () => {
   switchToHistory();
   if (historyLoaded) { historyDate = { ...NOW_YM }; loadHistoryMonth(historyDate.year, historyDate.month); }
 });
 
-// ── 触感反馈（事件委托替代每元素绑定） ──────────────────
+// ── 触感反馈 ──────────────────────────────────────────
 const press = (el, cls) => {
   if (!el) return;
   el.addEventListener("pointerdown", () => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); });
@@ -1099,22 +1013,21 @@ document.getElementById("exportCsvBtn").addEventListener("click", async () => {
   btn.disabled = true; btn.textContent = "导出中…";
   try {
     const { data, error } = await sb.from("expenses").select("*")
-      .eq("family_code", S.session.familyCode).order("created_at", { ascending: false });
+      .eq("family_code", AS.session.familyCode).order("created_at", { ascending: false });
     if (error || !data) { showToast("导出失败，请检查网络"); return; }
-
     const esc = v => { const s = v == null ? "" : String(v); return (s.includes(",") || s.includes("\n") || s.includes('"')) ? `"${s.replace(/"/g, '""')}"` : s; };
     const rows = data.map(r => {
       const d = new Date(r.created_at);
       return [
-        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-        `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`,
+        `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`,
+        `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`,
         r.member || "", r.category || "", r.name || "", Number(r.amount).toFixed(2), r.note || "",
       ].map(esc).join(",");
     });
     const csv  = ["日期,时间,成员,分类,名称,金额,备注", ...rows].join("\r\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement("a"), { href: url, download: `账单_${S.session.familyCode}_${getDateKey(new Date()).replace(/-/g, "")}.csv` });
+    const a    = Object.assign(document.createElement("a"), { href: url, download: `账单_${AS.session.familyCode}_${getDateKey(new Date()).replace(/-/g, "")}.csv` });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast(`已导出 ${data.length} 条账单 ✓`);
@@ -1127,15 +1040,14 @@ document.getElementById("exportCsvBtn").addEventListener("click", async () => {
 // ── 清空今日 ──────────────────────────────────────────
 clearTodayBtn.addEventListener("click", async () => {
   const todayKey   = getDateKey(new Date());
-  const todayItems = S.expenses.filter(item => getDateKey(new Date(item.timestamp)) === todayKey);
+  const todayItems = AS.expenses.filter(item => getDateKey(new Date(item.timestamp)) === todayKey);
   if (!todayItems.length) { showToast("今天还没有记录可清空"); return; }
   if (!confirm(`确认清空今日 ${todayItems.length} 条记录吗？此操作不可撤销。`)) return;
-
   clearTodayBtn.disabled = true; clearTodayBtn.textContent = "清空中…";
   const todayIds = new Set(todayItems.map(i => i.id));
-  S.expenses = S.expenses.filter(i => !todayIds.has(i.id));
-  saveExpenseCache(S.session.familyCode, S.expenses);
-  clearHistoryCache(S.session.familyCode);
+  AS.expenses = AS.expenses.filter(i => !todayIds.has(i.id));
+  saveExpenseCache(AS.session.familyCode, AS.expenses);
+  clearHistoryCache(AS.session.familyCode);
   refreshView();
   await Promise.all([...todayIds].map(id => deleteExpenseFromCloud(id)));
   clearTodayBtn.disabled = false; clearTodayBtn.textContent = "清空今日数据";
@@ -1143,17 +1055,16 @@ clearTodayBtn.addEventListener("click", async () => {
 });
 
 // ── PWA ───────────────────────────────────────────────
-const isStandalone  = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-const hideInstall   = () => { installPrompt.classList.add("hidden"); installPrompt.classList.remove("flex"); };
-const showInstall   = (msg, canInstall) => {
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+const hideInstall  = () => { installPrompt.classList.add("hidden"); installPrompt.classList.remove("flex"); };
+const showInstall  = (msg, canInstall) => {
   if (isStandalone()) { hideInstall(); return; }
   installHintText.textContent = msg; installAppBtn.disabled = !canInstall;
   installPrompt.classList.remove("hidden"); installPrompt.classList.add("flex");
 };
 
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator)
   window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
-}
 
 let installEventReceived = false, installCheckTimer = null;
 if (isStandalone()) { hideInstall(); }
@@ -1165,7 +1076,6 @@ else {
       showInstall("暂未触发安装事件。可继续浏览后重试，或用 Chrome 菜单手动安装。", true);
   }, 5000);
 }
-
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault(); installEventReceived = true;
   if (installCheckTimer) { clearTimeout(installCheckTimer); installCheckTimer = null; }
@@ -1184,12 +1094,7 @@ window.addEventListener("appinstalled", () => { hideInstall(); deferredInstallPr
 
 // ── 启动 ──────────────────────────────────────────────
 _splashShownAt = performance.now();
-setDefaultExpenseDate();
-S.session = loadSession();
-if (S.session) {
-  initApp();
-} else {
-  loginOverlay.classList.remove("hidden");
-  initLoginUI();
-  dismissSplashScreen();
-}
+dateInput.value = dateInput.max = getDateKey(new Date());
+AS.session = loadSession();
+if (AS.session) { initApp(); }
+else { loginOverlay.classList.remove("hidden"); initLoginUI(); dismissSplashScreen(); }
