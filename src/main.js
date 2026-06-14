@@ -3,7 +3,7 @@ import {
   sb, loadExpenseCache, saveExpenseCache,
   loadHistoryCache, saveHistoryCache, clearHistoryCache,
   saveExpenseToCloud, flushPendingUploads,
-  fetchFamilyExpenses, deleteExpenseFromCloud,
+  fetchFamilyExpenses, deleteExpenseFromCloud, updateExpenseInCloud,
   fetchFamilyBudget, saveFamilyBudgetToCloud,
   fetchLastMonthTotal, syncFamilyMembers, registerAllLocalFamilies,
 } from './db.js';
@@ -24,6 +24,7 @@ let recentExpenseFilterMember = null;
 let lastMonthTotalCached      = 0;
 let realtimeChannel           = null;
 let _splashShownAt            = 0;
+let _editingRecord            = null;
 const deletingExpenseIds      = new Set();
 
 // ── 内联工具（替代已删除的 utils.js） ─────────────────
@@ -261,7 +262,7 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
         </svg>
       </div>
     </div>
-    <div class="row-content flex items-center px-4 py-3.5 sm:px-5 bg-white transition-transform duration-150">
+      <div class="row-content flex items-center px-4 py-3.5 sm:px-5 bg-white transition-transform duration-150 cursor-pointer">
       <span class="mr-3 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl text-xl" style="background:${config.chartColor}18">${config.emoji}</span>
       <div class="flex-1 min-w-0">
         <p class="truncate text-[15px] font-medium text-slate-900 name-el"></p>
@@ -324,7 +325,7 @@ function createExpenseRow(record, { enableSwipeDelete = false } = {}) {
   return article;
 }
 
-// ── 删除按钮事件委托 ──────────────────────────────────
+// ── 删除 & 点击编辑事件委托 ───────────────────────────
 function bindListDelegation(list) {
   if (!list) return;
   list.addEventListener("pointerdown", e => {
@@ -336,10 +337,17 @@ function bindListDelegation(list) {
   }, true);
   list.addEventListener("click", async e => {
     const btn = e.target.closest(".delete-record-btn");
-    if (!btn) return;
-    e.preventDefault(); e.stopPropagation();
-    const id = btn.closest("[data-record-id]")?.dataset.recordId;
-    if (id) await handleDeleteRecord(id, { sourceButton: btn });
+    if (btn) {
+      e.preventDefault(); e.stopPropagation();
+      const id = btn.closest("[data-record-id]")?.dataset.recordId;
+      if (id) await handleDeleteRecord(id, { sourceButton: btn });
+      return;
+    }
+    const article = e.target.closest("[data-record-id]");
+    if (!article) return;
+    const id = article.dataset.recordId;
+    const record = AS.expenses.find(r => r.id === id) || _historyExpenses.find(r => r.id === id);
+    if (record) openModal(record);
   });
 }
 bindListDelegation(expenseList);
@@ -404,12 +412,32 @@ async function handleDeleteRecord(id, { sourceButton } = {}) {
 
 // ── Modal ─────────────────────────────────────────────
 let _modalSavedScrollY = 0, _vvCleanup = null;
+const _modalTitle  = document.getElementById("modalTitle");
+const _saveExpBtn  = document.getElementById("saveExpenseBtn");
 
-function openModal() {
+function openModal(record = null) {
   if (!modal.classList.contains("hidden")) return;
+  _editingRecord = record;
+
+  if (record) {
+    _modalTitle.textContent = "修改账单";
+    _saveExpBtn.textContent = "保存修改";
+    nameInput.value   = record.name || "";
+    amountInput.value = record.amount || "";
+    noteInput.value   = record.note || "";
+    const catRadio = form.querySelector(`input[name="category"][value="${record.category}"]`);
+    if (catRadio) catRadio.checked = true;
+    const d = new Date(record.timestamp ?? record.created_at);
+    dateInput.max   = getDateKey(new Date());
+    dateInput.value = getDateKey(d);
+  } else {
+    _modalTitle.textContent = "新增消费";
+    _saveExpBtn.textContent = "确定添加";
+    dateInput.value = dateInput.max = getDateKey(new Date());
+  }
+
   overlay.classList.remove("hidden");
   modal.classList.remove("hidden");
-  dateInput.value = dateInput.max = getDateKey(new Date());
   _modalSavedScrollY = window.scrollY || 0;
   document.body.style.top = `${-_modalSavedScrollY}px`;
   document.documentElement.classList.add("modal-sheet-open");
@@ -442,6 +470,9 @@ function closeModal() {
   _modalSavedScrollY = 0;
   overlay.classList.add("hidden");
   modal.classList.add("hidden");
+  _editingRecord = null;
+  _modalTitle.textContent = "新增消费";
+  _saveExpBtn.textContent = "确定添加";
   form.reset();
   dateInput.value = dateInput.max = getDateKey(new Date());
 }
@@ -785,6 +816,34 @@ form.addEventListener("submit", async e => {
   if (amount > 999 && !confirm(`⚠️ 金额较大：¥${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}\n\n确认金额无误吗？`)) return;
 
   const ts = buildTimestampFromDateInput(dateInput?.value || "");
+
+  if (_editingRecord) {
+    const original = _editingRecord;
+    const updated  = { ...original, name, amount, category, note, timestamp: ts, created_at: ts };
+    AS.expenses = AS.expenses.map(r => r.id === original.id ? updated : r);
+    _historyExpenses = _historyExpenses.map(r => r.id === original.id ? updated : r);
+    saveExpenseCache(AS.session.familyCode, AS.expenses);
+    clearHistoryCache(AS.session.familyCode);
+    refreshView();
+    if (historyLoaded) applyHistoryFilter();
+    closeModal();
+    const ok = await updateExpenseInCloud(original.id, updated);
+    if (!ok) {
+      AS.expenses = AS.expenses.map(r => r.id === original.id ? original : r);
+      _historyExpenses = _historyExpenses.map(r => r.id === original.id ? original : r);
+      saveExpenseCache(AS.session.familyCode, AS.expenses);
+      refreshView();
+      if (historyLoaded) applyHistoryFilter();
+      showToast("⚠️ 修改失败，已恢复原账单");
+    } else {
+      const fresh = await fetchFamilyExpenses();
+      AS.expenses = fresh; saveExpenseCache(AS.session.familyCode, fresh);
+      refreshView();
+      showToast("账单已修改 ✓");
+    }
+    return;
+  }
+
   const record = {
     id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     name, amount, category, note, member: AS.session.member, timestamp: ts, created_at: ts,

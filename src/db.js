@@ -104,6 +104,17 @@ export async function deleteExpenseFromCloud(id) {
   return !error;
 }
 
+export async function updateExpenseInCloud(id, record) {
+  const { error } = await sb.from("expenses").update({
+    name: record.name,
+    amount: record.amount,
+    category: record.category,
+    note: record.note || null,
+    created_at: record.timestamp,
+  }).eq("id", id).eq("family_code", window.AppStore.session.familyCode);
+  return !error;
+}
+
 export async function fetchFamilyBudget() {
   const { data, error } = await sb.from("family_settings").select("monthly_budget")
     .eq("family_code", window.AppStore.session.familyCode).maybeSingle();
