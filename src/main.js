@@ -93,6 +93,32 @@ const cancelBudgetBtn = document.getElementById("cancelBudgetBtn");
 const saveBudgetBtn   = document.getElementById("saveBudgetBtn");
 let deferredInstallPrompt = null;
 
+// ── 智能备注→分类预判 ─────────────────────────────────
+const NOTE_CAT_RULES = [
+  { cat: "购物",   kw: ["big c","bigc","lotus","tesco","makro","家乐福","沃尔玛","超市","便利店","全联","711","7-11","seven eleven","costco","tops"] },
+  { cat: "餐饮",   kw: ["7-eleven","7eleven","coffee","cafe","咖啡","奶茶","泰茶","茶","restaurant","餐厅","外卖","麦当劳","mcdonald","kfc","肯德基","burger","pizza","寿司","烧烤","火锅","早餐","午餐","晚餐","甜品","饭","面","米","小吃","bistro","deli","eatery","food"] },
+  { cat: "交通",   kw: ["bts","mrt","grab","taxi","打车","出租","地铁","公交","bus","uber","lyft","高铁","机票","油费","加油","滴滴","toll","parking","停车","机场","airport"] },
+  { cat: "医疗",   kw: ["医院","诊所","药店","药房","检查","手术","医药","hospital","clinic","pharmacy","doctor","药"] },
+  { cat: "娱乐",   kw: ["电影","ktv","游戏","netflix","spotify","youtube","cinema","concert","门票","展览","游乐","spa","健身","gym"] },
+  { cat: "居家",   kw: ["水电","燃气","rent","租金","房租","家具","维修","ikea","装修","物业","宽带","网费","电费","水费"] },
+  { cat: "通讯",   kw: ["话费","流量","手机","充值","电话","sim","dtac","ais","true move","月租","套餐"] },
+];
+const _autoCatFromText = text => {
+  const v = text.toLowerCase();
+  return NOTE_CAT_RULES.find(r => r.kw.some(k => v.includes(k)))?.cat ?? null;
+};
+const _applyAutoCategory = () => {
+  if (_editingRecord) return;
+  const combined = (nameInput.value + " " + noteInput.value).trim();
+  if (!combined) return;
+  const matched = _autoCatFromText(combined);
+  if (!matched) return;
+  const current = form.querySelector('input[name="category"]:checked')?.value;
+  if (current === matched) return;
+  const radio = form.querySelector(`input[name="category"][value="${matched}"]`);
+  if (radio) radio.checked = true;
+};
+
 // ── 摘要卡片 ──────────────────────────────────────────
 function updateSummary() {
   animateNumber(totalEl, totalSpent);
@@ -800,6 +826,8 @@ fabButton.addEventListener("click", openModal);
 closeModalBtn.addEventListener("click", closeModal);
 overlay.addEventListener("click", closeModal);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !modal.classList.contains("hidden")) closeModal(); });
+nameInput.addEventListener("input", _applyAutoCategory);
+noteInput.addEventListener("input", _applyAutoCategory);
 
 document.getElementById("recentMemberFilter")?.addEventListener("change", e => {
   recentExpenseFilterMember = e.target.value === "__all__" ? null : e.target.value;

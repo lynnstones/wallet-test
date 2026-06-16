@@ -16,22 +16,94 @@ export const categoryConfig = {
 export const formatMoney = v => "¥ " + Number(v).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const getDateKey  = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
+// ── 图表实例 & 穿透状态 ───────────────────────────────
 const C = { spending: null, weekly: null, weeklyHist: null };
+let _drillCat = null;
 
+// 将 hex 颜色与白色按比例混合，t=1 为原色，t=0 为纯白
+const hexMix = (hex, t) => {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgb(${Math.round(255+(r-255)*t)},${Math.round(255+(g-255)*t)},${Math.round(255+(b-255)*t)})`;
+};
+
+// 返回按钮（单例，延迟插入 DOM）
+let _backBtn = null;
+function ensureBackBtn() {
+  if (_backBtn) return _backBtn;
+  _backBtn = document.createElement("button");
+  _backBtn.type = "button";
+  _backBtn.className = "hidden items-center gap-1.5 text-xs font-medium text-slate-500 bg-white/80 backdrop-blur-sm rounded-full px-3 py-1.5 border border-slate-200 shadow-sm transition hover:text-slate-800 hover:bg-white active:scale-95 mb-3 self-start";
+  _backBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>返回全部分类`;
+  _backBtn.addEventListener("click", () => { _drillCat = null; updateChart(); });
+  const chartWrap = document.getElementById("chartWrap");
+  chartWrap?.parentElement?.insertBefore(_backBtn, chartWrap);
+  return _backBtn;
+}
+
+// ── 饼图：本月支出分布（含分类穿透） ─────────────────
 export function updateChart() {
   const now = new Date(), y = now.getFullYear(), m = now.getMonth();
+  const monthExpenses = window.AppStore.expenses
+    .filter(e => { const d = new Date(e.timestamp); return d.getFullYear() === y && d.getMonth() === m; });
+
+  const chartWrap  = document.getElementById("chartWrap");
+  const chartEmpty = document.getElementById("chartEmpty");
+  const canvas     = document.getElementById("spendingChart");
+  const centerEl   = document.getElementById("chartCenterAmount");
+  const legendEl   = document.getElementById("chartLegend");
+
+  // ── 二级穿透视图 ──────────────────────────────────
+  if (_drillCat) {
+    const items = monthExpenses.filter(e => (e.category || "其他") === _drillCat);
+    if (!items.length) {
+      _drillCat = null; // 分类已无数据，回退到总览
+    } else {
+      ensureBackBtn().classList.replace("hidden", "flex") || ensureBackBtn().classList.add("flex");
+
+      const sorted     = [...items].sort((a, b) => Number(b.amount) - Number(a.amount));
+      const base       = (categoryConfig[_drillCat] || categoryConfig["其他"]).chartColor;
+      const n          = sorted.length;
+      const labels     = sorted.map(e => e.name.length > 9 ? e.name.slice(0, 8) + "…" : e.name);
+      const values     = sorted.map(e => Number(e.amount));
+      const colors     = sorted.map((_, i) => hexMix(base, 1 - (i / Math.max(n - 1, 1)) * 0.52));
+      const total      = values.reduce((a, b) => a + b, 0);
+      const cfg        = categoryConfig[_drillCat] || categoryConfig["其他"];
+
+      chartEmpty.classList.add("hidden"); chartEmpty.classList.remove("flex");
+      chartWrap.classList.remove("hidden");
+      centerEl.textContent = `${cfg.emoji} ${_drillCat}`;
+      legendEl.innerHTML = sorted.map((e, i) => {
+        const pct = ((values[i] / total) * 100).toFixed(1);
+        return `<li class="flex items-center justify-between gap-2">
+          <span class="flex items-center gap-2 text-sm text-slate-700 min-w-0">
+            <span class="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style="background:${colors[i]}"></span>
+            <span class="truncate">${e.name}</span>
+          </span>
+          <span class="shrink-0 text-xs text-slate-500">¥ ${values[i].toLocaleString("zh-CN", { maximumFractionDigits: 0 })} <span class="text-slate-400">(${pct}%)</span></span>
+        </li>`;
+      }).join("");
+
+      if (C.spending) {
+        C.spending.data.labels = labels;
+        C.spending.data.datasets[0].data = values;
+        C.spending.data.datasets[0].backgroundColor = colors;
+        C.spending.update("active");
+      }
+      return;
+    }
+  }
+
+  // ── 一级总览视图 ──────────────────────────────────
+  const btn = ensureBackBtn();
+  btn.classList.add("hidden"); btn.classList.remove("flex");
+
   const totals = {};
-  window.AppStore.expenses
-    .filter(e => { const d = new Date(e.timestamp); return d.getFullYear() === y && d.getMonth() === m; })
-    .forEach(e => { const c = e.category || "其他"; totals[c] = (totals[c] || 0) + Number(e.amount); });
+  monthExpenses.forEach(e => { const c = e.category || "其他"; totals[c] = (totals[c] || 0) + Number(e.amount); });
 
   const cats       = Object.keys(totals).filter(k => totals[k] > 0);
   const values     = cats.map(k => totals[k]);
   const colors     = cats.map(k => (categoryConfig[k] || categoryConfig["其他"]).chartColor);
   const grandTotal = values.reduce((a, b) => a + b, 0);
-  const chartWrap  = document.getElementById("chartWrap");
-  const chartEmpty = document.getElementById("chartEmpty");
-  const canvas     = document.getElementById("spendingChart");
 
   if (!cats.length) {
     chartWrap.classList.add("hidden");
@@ -42,8 +114,8 @@ export function updateChart() {
 
   chartEmpty.classList.add("hidden"); chartEmpty.classList.remove("flex");
   chartWrap.classList.remove("hidden");
-  document.getElementById("chartCenterAmount").textContent = "¥ " + grandTotal.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
-  document.getElementById("chartLegend").innerHTML = cats.map((cat, i) => {
+  centerEl.textContent = "¥ " + grandTotal.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+  legendEl.innerHTML = cats.map((cat, i) => {
     const pct = ((values[i] / grandTotal) * 100).toFixed(1);
     return `<li class="flex items-center justify-between gap-2">
       <span class="flex items-center gap-2 text-sm text-slate-700">
@@ -65,13 +137,23 @@ export function updateChart() {
       options: {
         cutout: "68%",
         animation: { animateRotate: true, duration: 600, easing: "easeInOutQuart" },
+        onClick: (_, elements) => {
+          if (!elements.length || _drillCat) return;
+          _drillCat = C.spending.data.labels[elements[0].index];
+          updateChart();
+        },
         plugins: {
           legend: { display: false },
           datalabels: { display: false },
           tooltip: {
             backgroundColor: "rgba(255,255,255,0.92)", titleColor: "#0f172a", bodyColor: "#475569",
             borderColor: "rgba(0,0,0,0.06)", borderWidth: 1, padding: 10, cornerRadius: 12,
-            callbacks: { label: ctx => ` ¥ ${ctx.parsed.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}  (${((ctx.parsed / grandTotal) * 100).toFixed(1)}%)` },
+            callbacks: {
+              label: ctx => {
+                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                return ` ¥ ${ctx.parsed.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}  (${((ctx.parsed / total) * 100).toFixed(1)}%)`;
+              },
+            },
           },
         },
       },
